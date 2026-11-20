@@ -221,3 +221,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Terraform: state and local files never go to GitHub
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+infra/build/
+terraform.tfvars
+*.auto.tfvars
+# frontend/js/config.js is generated at deploy time; the one in the repository is just an empty template
