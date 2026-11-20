@@ -1,0 +1,51 @@
+# Creates a login in Cognito, no terminal needed: Actions → Create user → Run workflow.
+# Each login has its own houses (the owner is the login's id).
+name: Create user
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment in which to create the user"
+        required: true
+        type: choice
+        options: [dev, producao] # names of the GitHub Environments
+      email:
+        description: "User's e-mail (receives the temporary password)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      EMAIL: ${{ inputs.email }} # through a variable: typed text is never pasted into the shell
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Create the user
+        run: |
+          if ! printf '%s' "$EMAIL" | grep -Eq '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'; then
+            echo "::error::Invalid e-mail."
+            exit 1
+          fi
+          TF_ENVIRONMENT="dev"
+          [ "$ENVIRONMENT" = "producao" ] && TF_ENVIRONMENT="prod"
+          POOL="$(aws cognito-idp list-user-pools --max-results 60 \
+            --query "UserPools[?Name=='many-houses-${TF_ENVIRONMENT}-users'].Id | [0]" --output text)"
+          if [ -z "$POOL" ] || [ "$POOL" = "None" ]; then
+            echo "::error::Could not find this environment's Cognito user pool. Deploy the environment first."
+            exit 1
+          fi
+          aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "$EMAIL" \
+            --user-attributes Name=email,Value="$EMAIL" Name=email_verified,Value=true > /dev/null
+          echo "User $EMAIL created in **$ENVIRONMENT**. They receive the temporary password by e-mail." >> "$GITHUB_STEP_SUMMARY"
