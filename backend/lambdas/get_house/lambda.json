@@ -1,0 +1,4 @@
+{
+  "route": "GET /houses/{id}",
+  "database": "read"
+}

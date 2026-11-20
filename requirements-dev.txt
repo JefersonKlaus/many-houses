@@ -1,0 +1,4 @@
+# Tools to develop and test (the Lambdas themselves need nothing beyond Python's standard library + boto3,
+# which AWS provides). Install with:  python dev.py setup
+pytest==8.4.2
+playwright==1.56.0
