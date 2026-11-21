@@ -88,11 +88,46 @@ export async function mount(container) {
         tile("Reforma", formatMoney(totals.renovation_cents), `${totals.expense_count} custo(s)`),
         tile("Total investido", formatMoney(totals.total_cents))),
       saleCard(house, totals),
-      purchaseCard(house, totals.payment),
-      house.payment_type === "installments" && installmentsCard(house, installments, totals.payment),
-      areasCard(house, totals),
-      categoriesCard(totals),
-      expensesCard(house, expenses, totals));
+      tabs(house.id, [
+        ["renovation", "Reforma", () => [areasCard(house, totals), categoriesCard(totals), expensesCard(house, expenses, totals)]],
+        ["purchase", "Compra", () => [purchaseCard(house, totals.payment)]],
+        house.payment_type === "installments" && ["installments",
+          `Prestações (${totals.payment.paid_count}/${totals.payment.installments_count})`,
+          () => [installmentsCard(house, installments, totals.payment)]],
+      ]));
+  }
+
+  // The tab open on each house's page: it stays open when the page is redrawn after a change.
+  const openTab = {};
+
+  /** Tabs: [[key, label, () => panel's children]...] (falsy ones are skipped). Arrow keys move between them. */
+  function tabs(houseId, list) {
+    list = list.filter(Boolean);
+    if (!list.some(([key]) => key === openTab[houseId])) openTab[houseId] = list[0][0];
+    const buttons = [], panels = [];
+    const select = (key, focus = false) => {
+      openTab[houseId] = key;
+      list.forEach(([k], i) => {
+        const on = k === key;
+        buttons[i].setAttribute("aria-selected", String(on));
+        buttons[i].tabIndex = on ? 0 : -1;
+        panels[i].hidden = !on;
+        if (on && focus) buttons[i].focus();
+      });
+    };
+    list.forEach(([key, label, content]) => {
+      buttons.push(h("button", { type: "button", role: "tab", id: `tab-${key}`, "aria-controls": `panel-${key}`,
+        onclick: () => select(key),
+        onkeydown: (e) => {
+          const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+          if (!step) return;
+          const i = list.findIndex(([k]) => k === key);
+          select(list[(i + step + list.length) % list.length][0], true);
+        } }, label));
+      panels.push(h("div", { role: "tabpanel", id: `panel-${key}`, "aria-labelledby": `tab-${key}` }, content()));
+    });
+    select(openTab[houseId]);
+    return [h("div", { className: "tabs", role: "tablist", "aria-label": "Seções da casa" }, buttons), panels];
   }
 
   /** For how much to sell today, as it is, to make the profit wanted: it goes up with every renovation cost. */

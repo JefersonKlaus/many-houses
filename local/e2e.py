@@ -106,6 +106,15 @@ def run():
         expect(page.locator("h1")).to_contain_text("Casa Azul")
         expect(page.locator("#house-totals")).to_contain_text("318.000,00")
         assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
+
+        # the page is in tabs: Reforma is open; Compra has the purchase's data
+        expect(page.locator("[role=tab]")).to_have_text(["Reforma", "Compra", "Prestações (0/3)"])
+        expect(page.locator("#tab-renovation")).to_have_attribute("aria-selected", "true")
+        expect(page.locator("#areas")).to_be_visible()
+        expect(page.locator("#purchase")).to_be_hidden()
+        page.click("#tab-purchase")
+        expect(page.locator("#purchase")).to_be_visible()
+        expect(page.locator("#areas")).to_be_hidden()
         expect(page.locator("#purchase")).to_contain_text("Parcelado")
         expect(page.locator("#purchase")).to_contain_text("60.000,00")                 # entrada
         expect(page.locator("#purchase")).to_contain_text("240.000,00")                # the rest, in installments
@@ -113,6 +122,9 @@ def run():
         expect(page.locator("#sale .sale-price")).to_have_text("R$ 413.400,00")       # 318.000 + 30%
 
         # installments: the three registered with the house; the first is paid, the last deleted
+        page.keyboard.press("ArrowRight")                                              # Compra -> Prestações
+        expect(page.locator("#tab-installments")).to_be_focused()
+        expect(page.locator("#installments")).to_be_visible()
         expect(page.locator("#installments tbody tr")).to_have_count(3)
         expect(page.locator("#installments tbody")).to_contain_text("15/04/2026")
         expect(page.locator("#installments .totals")).to_contain_text("0 de 3")
@@ -125,8 +137,11 @@ def run():
         page.locator(".menu-list:not([hidden]) [role=menuitem]", has_text="Excluir").click()
         expect(page.locator("#installments tbody tr")).to_have_count(2)
         expect(page.locator("#installments .totals")).to_contain_text("1 de 2")
+        expect(page.locator("#installments")).to_be_visible()                          # the tab stays open after a change
+        expect(page.locator("#tab-installments")).to_have_text("Prestações (1/2)")
 
         # two renovation costs, each in an area, then one is changed and the other deleted
+        page.click("#tab-renovation")
         expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Cozinha, Banheiros, Edícula")
         for description, category, area, amount in (("Cimento e areia", "material", "Cozinha", "1.500,50"),
                                                     ("Pedreiro", "labor", "Banheiros", "4.000")):
@@ -207,6 +222,7 @@ def run_without_login():
         expect(page.locator("#areas li").first).to_contain_text("Telhado")
         expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Banheiros, Cozinha")
         expect(page.locator("#expenses tbody tr")).to_have_count(7)
+        page.click("#tab-installments")
         expect(page.locator("#installments tbody tr")).to_have_count(12)               # a page of a long plan
         expect(page.locator("#installments .pager-page")).to_contain_text("de 10")
         width = page.evaluate("document.documentElement.scrollWidth")

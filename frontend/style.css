@@ -51,6 +51,12 @@ main { width: 100%; max-width: var(--page-max); min-width: min(100%, var(--page-
 h1, h2 { margin: 0 0 12px; font-size: 1.25rem; }
 h1 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+/* tabs of a house's page: Reforma, Compra, Prestações */
+.tabs { display: flex; gap: 4px; margin: 4px 0 12px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.tabs [role=tab] { flex: none; padding: 10px 14px; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
+  background: none; font: inherit; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tabs [role=tab]:hover { color: var(--text); }
+.tabs [role=tab][aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .muted { color: var(--muted); font-size: .9rem; }
 .notice { color: var(--muted); text-align: center; padding: 24px 0; }
@@ -141,7 +147,14 @@ td .badge { margin-left: 0; white-space: nowrap; }
 .totals span { display: block; font-size: .8rem; color: var(--muted); }
 .totals strong { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
 .totals small { font-size: .75rem; }
-@media (max-width: 640px) { .totals { grid-template-columns: 1fr; } .two-columns { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .totals { grid-template-columns: 1fr; gap: 6px; }
+  /* on a phone each total is one line: the label on the left, the value (and its note) on the right */
+  .totals div { display: grid; grid-template-columns: 1fr auto; align-items: baseline; column-gap: 8px; padding: 8px 12px; }
+  .totals strong { font-size: 1.05rem; text-align: right; }
+  .totals small { grid-column: 2; text-align: right; }
+  .two-columns { grid-template-columns: 1fr; }
+}
 
 /* ------------------------------------------------------------------ lists */
 .count { color: var(--muted); font-weight: normal; }
