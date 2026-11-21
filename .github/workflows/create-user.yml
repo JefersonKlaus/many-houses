@@ -1,4 +1,5 @@
 # Creates a login in Cognito, no terminal needed: Actions → Create user → Run workflow.
+# The login is the phone (DDD + number); the e-mail receives the temporary password.
 # Each login has its own houses (the owner is the login's id).
 name: Create user
 
@@ -10,8 +11,12 @@ on:
         required: true
         type: choice
         options: [dev, producao] # names of the GitHub Environments
+      phone:
+        description: "Phone used to log in: DDD + number, digits only (e.g. 11987654321)"
+        required: true
+        type: string
       email:
-        description: "User's e-mail (receives the temporary password)"
+        description: "E-mail that receives the temporary password"
         required: true
         type: string
 
@@ -23,7 +28,8 @@ jobs:
     runs-on: ubuntu-24.04 # pinned: Playwright has no Chromium for newer Ubuntu yet
     environment: ${{ inputs.environment }}
     env:
-      EMAIL: ${{ inputs.email }} # through a variable: typed text is never pasted into the shell
+      PHONE: ${{ inputs.phone }} # through variables: typed text is never pasted into the shell
+      EMAIL: ${{ inputs.email }}
       ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -34,6 +40,10 @@ jobs:
 
       - name: Create the user
         run: |
+          if ! printf '%s' "$PHONE" | grep -Eq '^[1-9]{2}[0-9]{8,9}$'; then
+            echo "::error::Invalid phone: type DDD + number, digits only (10 or 11 digits)."
+            exit 1
+          fi
           if ! printf '%s' "$EMAIL" | grep -Eq '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'; then
             echo "::error::Invalid e-mail."
             exit 1
@@ -41,11 +51,14 @@ jobs:
           TF_ENVIRONMENT="dev"
           [ "$ENVIRONMENT" = "producao" ] && TF_ENVIRONMENT="prod"
           POOL="$(aws cognito-idp list-user-pools --max-results 60 \
-            --query "UserPools[?Name=='many-houses-${TF_ENVIRONMENT}-users'].Id | [0]" --output text)"
+            --query "UserPools[?Name=='many-houses-${TF_ENVIRONMENT}-login'].Id | [0]" --output text)"
           if [ -z "$POOL" ] || [ "$POOL" = "None" ]; then
             echo "::error::Could not find this environment's Cognito user pool. Deploy the environment first."
             exit 1
           fi
-          aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "$EMAIL" \
-            --user-attributes Name=email,Value="$EMAIL" Name=email_verified,Value=true > /dev/null
-          echo "User $EMAIL created in **$ENVIRONMENT**. They receive the temporary password by e-mail." >> "$GITHUB_STEP_SUMMARY"
+          # The username is the phone in international format (+55...); the temporary password goes by e-mail.
+          aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "+55$PHONE" \
+            --user-attributes Name=phone_number,Value="+55$PHONE" Name=phone_number_verified,Value=true \
+                              Name=email,Value="$EMAIL" Name=email_verified,Value=true \
+            --desired-delivery-mediums EMAIL > /dev/null
+          echo "User $PHONE created in **$ENVIRONMENT**. The temporary password was sent by e-mail." >> "$GITHUB_STEP_SUMMARY"

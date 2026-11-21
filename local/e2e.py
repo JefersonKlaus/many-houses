@@ -24,6 +24,10 @@ def cognito(route):
     """First access requires a new password, like a user created by the administrator."""
     target = route.request.headers["x-amz-target"].split(".")[-1]
     body = json.loads(route.request.post_data)
+    if target == "InitiateAuth" and "USERNAME" in body["AuthParameters"]:
+        assert body["AuthParameters"]["USERNAME"] == "+5511987654321"   # DDD + number becomes +55...
+    if target == "RespondToAuthChallenge":
+        assert body["ChallengeResponses"]["USERNAME"] == "+5511987654321"
     if target == "InitiateAuth" and body["AuthParameters"].get("PASSWORD") == "wrong":
         return route.fulfill(status=400, content_type="application/x-amz-json-1.1",
                              body=json.dumps({"__type": "NotAuthorizedException"}))
@@ -52,10 +56,14 @@ def run():
         page.goto(url_of(server))
 
         # login: wrong password, then first access with a new password
-        page.fill("#l-email", "owner@example.com")
+        page.fill("#l-phone", "119876543")             # too short: caught on the screen
         page.fill("#l-password", "wrong")
         page.click("text=Entrar")
-        expect(page.locator(".toast.error")).to_contain_text("incorretos")
+        expect(page.locator(".toast.error")).to_contain_text("Celular inválido")
+        page.fill("#l-phone", "11987654321")
+        page.fill("#l-password", "wrong")
+        page.click("text=Entrar")
+        expect(page.locator(".toast.error").last).to_contain_text("incorretos")
         page.fill("#l-password", "Strong-Password-1")
         page.click("text=Entrar")
         expect(page.locator("text=Primeiro acesso")).to_be_visible()

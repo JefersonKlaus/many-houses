@@ -101,6 +101,7 @@ creates the function, the route and the logs. Lambdas marked `"read"` can only r
 Rules worth knowing:
 
 - The owner comes from the login token (`sub`), never from the request: each login sees only its houses.
+- The login is the phone: the screen takes DDD + number (digits only) and sends `+55<digits>` to Cognito.
 - Money is always integer cents (`purchase_price_cents`, `amount_cents`...), never a float.
 - Purchase = price + purchase costs. Total invested = purchase + every renovation cost.
 - Deleting a house deletes its costs first, so no orphan is left behind.
@@ -144,8 +145,9 @@ table** (every login and all the data): that stops it before anything is applied
 
 ### Create a login
 
-Actions → *Create user* → choose the environment and type the e-mail. Cognito e-mails a temporary
-password. There is no open sign-up.
+Actions → *Create user* → choose the environment, type the phone (DDD + number, digits only, e.g.
+`11987654321`) and an e-mail. The person logs in with that phone; Cognito e-mails the temporary
+password, which is changed on the first access. There is no open sign-up.
 
 ## Security and cost
 

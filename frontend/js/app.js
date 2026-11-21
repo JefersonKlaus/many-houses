@@ -7,14 +7,17 @@ const content = document.getElementById("content");
 const SCREENS = [["Casas", houses]];             // [name in the menu, mount]
 
 function loginScreen(challenge = null) {
-  const email = h("input", { id: "l-email", type: "email", autocomplete: "username", required: true, value: challenge?.email || "" });
+  // DDD + number, digits only (no mask): 11987654321
+  const phone = h("input", { id: "l-phone", type: "tel", inputMode: "numeric", autocomplete: "tel-national",
+    placeholder: "11987654321", maxLength: 11, required: true,
+    title: "DDD + número, só os dígitos (10 ou 11)" });
   const password = h("input", { id: "l-password", type: "password", required: true,
     autocomplete: challenge ? "new-password" : "current-password" });
   const button = h("button", { className: "primary", type: "submit" }, challenge ? "Definir senha" : "Entrar");
   const form = h("form", { className: "card login" },
     h("h1", {}, "Minhas Casas"),
     challenge && h("p", { className: "muted" }, "Primeiro acesso: escolha a sua senha (10+ caracteres, com maiúscula, minúscula e número)."),
-    !challenge && [h("label", { htmlFor: "l-email" }, "E-mail"), email],
+    !challenge && [h("label", { htmlFor: "l-phone" }, "Celular (DDD + número)"), phone],
     h("label", { htmlFor: "l-password" }, challenge ? "Nova senha" : "Senha"), password,
     h("div", { className: "actions" }, button));
   form.addEventListener("submit", (e) => {
@@ -22,14 +25,14 @@ function loginScreen(challenge = null) {
     whileDisabled(button, async () => {
       try {
         if (challenge) { await setNewPassword(challenge, password.value); return start(); }
-        const r = await signIn(email.value.trim(), password.value);
+        const r = await signIn(phone.value.trim(), password.value);
         if (r.challenge) return loginScreen(r.challenge);
         start();
       } catch (error) { notify(error.message, true); }
     });
   });
   render(content, form);
-  (challenge ? password : email).focus();
+  (challenge ? password : phone).focus();
 }
 
 function start() {
