@@ -21,4 +21,4 @@ def update_installment(deps: Dependencies, user: str, house_id: str, id: str,
         installment = replace(installment, paid_by=before.paid_by if before.paid else access.member_id)
     check_member(access.house, installment.paid_by)
     deps.repo.save_installments(access.owner, [installment])
-    return house_view(deps.repo, access)
+    return house_view(deps, access)

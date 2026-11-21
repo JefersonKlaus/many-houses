@@ -29,4 +29,4 @@ def remove_partner(deps: Dependencies, user: str, house_id: str, id: str) -> dic
     house = replace(house, partners=tuple(p for p in house.partners if p.id != id))
     deps.repo.save_house(owner, house)
     deps.repo.delete_link(partner.user, house_id)
-    return house_view(deps.repo, Access(owner, house, access.member_id))
+    return house_view(deps, Access(owner, house, access.member_id))

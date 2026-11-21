@@ -24,4 +24,4 @@ def update_house(deps: Dependencies, user: str, id: str, payload: Mapping[str, A
     if house.payment_type == "cash" and deps.repo.list_installments(access.owner, id):
         raise ValidationError("à vista: exclua antes as prestações desta casa")
     deps.repo.save_house(access.owner, house)
-    return house_view(deps.repo, Access(access.owner, house, access.member_id))
+    return house_view(deps, Access(access.owner, house, access.member_id))

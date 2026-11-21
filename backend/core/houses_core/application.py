@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .domain.errors import NotFound, ValidationError
-from .domain.models import EXPENSE_CATEGORIES, OWNER_MEMBER_ID, Expense, House, Installment
-from .ports import Repository
+from .domain.models import (EXPENSE_CATEGORIES, OWNER_MEMBER_ID, Expense, House, Installment, TimelineEntry,
+                            photo_key)
+from .ports import Dependencies, Repository
 
 MAX_HOUSES = 500
 MAX_EXPENSES_PER_HOUSE = 2000
@@ -219,15 +220,37 @@ def public_house(house: House) -> dict[str, Any]:
     return data
 
 
-def house_view(repo: Repository, access: Access) -> dict[str, Any]:
+def sorted_timeline(entries: Iterable[TimelineEntry]) -> list[TimelineEntry]:
+    """From the purchase to the end: oldest first."""
+    return sorted(entries, key=lambda t: (t.date, t.id))
+
+
+def photo_keys(access: Access, photo_ids: Iterable[str]) -> list[str]:
+    return [photo_key(access.owner, access.house.id, p) for p in photo_ids if p]
+
+
+def delete_photos(deps: Dependencies, access: Access, photo_ids: Iterable[str]) -> None:
+    if deps.photos is not None:
+        keys = photo_keys(access, photo_ids)
+        if keys:
+            deps.photos.delete(keys)
+
+
+def house_view(deps: Dependencies, access: Access) -> dict[str, Any]:
     """One house's page: the house, its members, its costs (newest first), its installments (in due
-    order) and the totals. GET /houses/{id} answers this, and so does every change to a house, so the
-    screen redraws at once, without a second request. `me`: who the user is among the members."""
-    house = access.house
+    order), its timeline (oldest first) and the totals. Each photo comes with a link valid for a while.
+    GET /houses/{id} answers this, and so does every change to a house, so the screen redraws at once,
+    without a second request. `me`: who the user is among the members."""
+    repo, house = deps.repo, access.house
+    url = lambda photo_id: (deps.photos.view_url(photo_key(access.owner, house.id, photo_id))  # noqa: E731
+                            if deps.photos is not None and photo_id else "")
     expenses = sorted_expenses(repo.list_expenses(access.owner, house.id))
     installments = sorted_installments(repo.list_installments(access.owner, house.id))
+    timeline = sorted_timeline(repo.list_timeline(access.owner, house.id))
     return {"house": public_house(house), "members": members(house),
             "me": access.member_id, "role": "owner" if access.is_owner else "partner",
-            "expenses": [e.to_dict() for e in expenses],
+            "expenses": [{**e.to_dict(), "nf_photo_url": url(e.nf_photo), "material_photo_url": url(e.material_photo)}
+                         for e in expenses],
             "installments": [i.to_dict() for i in installments],
+            "timeline": [{**t.to_dict(), "photo_urls": [url(p) for p in t.photos]} for t in timeline],
             "totals": totals(house, expenses, installments)}

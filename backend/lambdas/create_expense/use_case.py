@@ -21,4 +21,4 @@ def create_expense(deps: Dependencies, user: str, house_id: str, payload: Mappin
     check_member(access.house, expense.paid_by)
     check_expense_limit(deps.repo, access.owner, house_id)
     deps.repo.save_expense(access.owner, expense)
-    return house_view(deps.repo, access)
+    return house_view(deps, access)

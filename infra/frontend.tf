@@ -17,14 +17,15 @@ resource "aws_cloudfront_origin_access_control" "site" {
   signing_protocol                  = "sigv4"
 }
 
-# Security headers. The CSP only lets the site talk to itself, to Cognito and to the API.
+# Security headers. The CSP only lets the site talk to itself, to Cognito, to the API and to the photos
+# bucket (sending photos, showing them; blob: for the preview of a photo just chosen).
 resource "aws_cloudfront_response_headers_policy" "security" {
   name = "${local.prefix}-security"
 
   security_headers_config {
     content_security_policy {
       override                = true
-      content_security_policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://cognito-idp.${var.region}.amazonaws.com https://*.execute-api.${var.region}.amazonaws.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+      content_security_policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: ${local.photos_origin}; connect-src 'self' https://cognito-idp.${var.region}.amazonaws.com https://*.execute-api.${var.region}.amazonaws.com ${local.photos_origin}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     }
 
     content_type_options {

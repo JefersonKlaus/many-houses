@@ -1,11 +1,12 @@
 // Casas: every house with what it cost (purchase + renovation), and each house's page with its purchase
 // (price, entrada and the installments being paid), its renovation costs by area and category, the list of
-// costs and, for a house bought with partners, how much each one put in. Invites to be a partner show up
+// costs (with photos of the NF and of the material or service), the timeline of photos from the purchase to
+// the end and, for a house bought with partners, how much each one put in. Invites to be a partner show up
 // on top of the list. Every change answers the house's whole page, which is drawn at once: one request
 // per change, never two.
-import { api } from "../api.js";
+import { api, uploadPhoto } from "../api.js";
 import { actionsMenu, centsToText, formatDate, formatMoney, formatPhone, h, notify, openDialog, percent, percentText,
-  render, toCents, toPercent, today, whileDisabled } from "../util.js";
+  render, toCents, toPercent, today, viewPhoto, whileDisabled } from "../util.js";
 import { PAGE_SIZE, pagedList, pagedRows } from "./paged-list.js";
 
 // The API's codes, in the order the screen shows them (backend/core/houses_core/domain/models.py).
@@ -139,6 +140,7 @@ export async function mount(container) {
           `Prestações (${totals.payment.paid_count}/${totals.payment.installments_count})`,
           () => [installmentsCard(house, installments, totals.payment)]],
         ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view), investmentCard(view)]],
+        ["timeline", view.timeline.length ? `Timeline (${view.timeline.length})` : "Timeline", () => [timelineCard(house, view.timeline)]],
       ]));
   }
 
@@ -314,7 +316,11 @@ export async function mount(container) {
     const rows = expenses.map((e) => h("tr", {},
       h("td", {}, formatDate(e.date)),
       h("td", {}, e.description, e.supplier && h("div", { className: "muted" }, e.supplier),
-        ctx.shared && h("div", { className: "muted paid-by" }, `pago por ${memberName(e.paid_by)}`)),
+        ctx.shared && h("div", { className: "muted paid-by" }, `pago por ${memberName(e.paid_by)}`),
+        (e.nf_photo_url || e.material_photo_url) && h("div", { className: "photo-links" },
+          e.nf_photo_url && h("button", { className: "link", onclick: () => viewPhoto(e.nf_photo_url, `NF: ${e.description}`) }, "Ver NF"),
+          e.material_photo_url && h("button", { className: "link",
+            onclick: () => viewPhoto(e.material_photo_url, e.description) }, "Ver foto"))),
       h("td", {}, CATEGORIES[e.category] || e.category,
         e.area_id && h("div", { className: "muted" }, areaName(house, e.area_id))),
       h("td", { className: "num" }, formatMoney(e.amount_cents)),
@@ -606,6 +612,9 @@ export async function mount(container) {
       value: expense ? centsToText(expense.amount_cents) : "" });
     const area = select("e-area", [["", "Sem área"], ...house.areas.map((a) => [a.id, a.name])], expense?.area_id || "");
     const paidBy = paidBySelect("e-paid-by", expense ? expense.paid_by || ctx.members[0].id : ctx.me);
+    const nfPhoto = photoField("e-nf", "Foto da NF", expense?.nf_photo, expense?.nf_photo_url);
+    const materialPhoto = photoField("e-material", "Foto do material ou serviço", expense?.material_photo,
+      expense?.material_photo_url);
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(expense ? "Editar custo" : `Novo custo: ${house.name}`,
       field("e-description", "Descrição", description),
@@ -615,20 +624,133 @@ export async function mount(container) {
       house.areas.length > 0 ? field("e-area", "Área da casa", area)
         : h("p", { className: "muted hint" }, "Para vincular o custo a uma área (cozinha, telhado…), marque as áreas em “Editar casa”."),
       paidBy && field("e-paid-by", "Pago por", paidBy),
+      h("div", { className: "two-columns photo-fields" }, nfPhoto.element, materialPhoto.element),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
         const body = { date: date.value, category: category.value, description: description.value,
           supplier: supplier.value, amount_cents: cents(amount, "Valor"), area_id: area.value,
           paid_by: paidBy ? paidBy.value : "" };
+        save.textContent = "Enviando fotos…";
+        body.nf_photo = await nfPhoto.id(house);
+        body.material_photo = await materialPhoto.id(house);
+        save.textContent = "Salvar";
         const view = expense ? await api("PUT", `/houses/${house.id}/expenses/${expense.id}`, body)
           : await api("POST", `/houses/${house.id}/expenses`, body);
         notify("Custo salvo.");
         dialog.close();
         show(view);
-      } catch (error) { notify(error.message, true); }
+      } catch (error) { save.textContent = "Salvar"; notify(error.message, true); }
     }));
     description.focus();
+  }
+
+  /** One photo in a form: the one there is (tap to see it), choose another (camera or gallery) or remove
+   *  it. `id(house)` gives the photo's id when saving: sends the chosen one first, "" if removed. */
+  function photoField(id, label, currentId = "", currentUrl = "") {
+    let chosen = null, keep = Boolean(currentId);
+    const preview = h("img", { className: "photo-thumb", alt: label, hidden: !currentUrl, src: currentUrl || null,
+      onclick: () => viewPhoto(preview.src, label) });
+    // the file input itself is hidden (its text follows the browser's language): a button-like label opens it
+    const input = h("input", { id, type: "file", accept: "image/*", className: "visually-hidden" });
+    const pick = h("label", { htmlFor: id, className: "file-button" }, currentUrl ? "Trocar foto" : "Escolher foto");
+    const remove = h("button", { type: "button", className: "link danger-link", hidden: !currentUrl }, "Remover");
+    input.addEventListener("change", () => {
+      chosen = input.files[0] || null;
+      if (!chosen) return;
+      if (preview.src.startsWith("blob:")) URL.revokeObjectURL(preview.src);
+      preview.src = URL.createObjectURL(chosen);
+      preview.hidden = remove.hidden = false;
+      pick.textContent = "Trocar foto";
+    });
+    remove.addEventListener("click", () => {
+      chosen = null; keep = false; input.value = "";
+      preview.hidden = remove.hidden = true;
+      preview.removeAttribute("src");
+      pick.textContent = "Escolher foto";
+    });
+    const element = h("div", { className: "photo-field" }, h("span", { className: "field-label" }, label), preview,
+      h("div", { className: "photo-actions" }, input, pick, remove));
+    return { element, id: async (house) => (chosen ? uploadPhoto(house.id, chosen) : keep ? currentId : "") };
+  }
+
+  // ------------------------------------------------------------------ timeline
+  /** The house's story in photos, from the purchase to the end: oldest first, a page of 10 moments at a
+   *  time, opening on the latest page. Each moment: its date, what it shows and its photos. */
+  function timelineCard(house, timeline) {
+    const add = h("button", { className: "primary small", onclick: () => timelineDialog(house, null) }, "Adicionar fotos");
+    const card = h("div", { className: "card", id: "timeline" }, h("div", { className: "row" }, h("h2", {}, "Timeline"), add));
+    if (timeline.length === 0) {
+      card.append(h("p", { className: "muted" }, "Registre aqui a evolução da casa, desde a compra até a conclusão: "
+        + "a data, o que mudou e as fotos."));
+      return card;
+    }
+    const remove = async (entry) => {
+      if (!confirm(`Excluir o registro de ${formatDate(entry.date)} e suas ${entry.photos.length} foto(s)?`)) return;
+      try { show(await api("DELETE", `/houses/${house.id}/timeline/${entry.id}`)); notify("Registro excluído."); }
+      catch (error) { notify(error.message, true); }
+    };
+    const rows = timeline.map((entry) => h("article", { className: "moment" },
+      h("div", { className: "moment-head" },
+        h("div", {}, h("strong", {}, formatDate(entry.date)), entry.caption && h("p", {}, entry.caption)),
+        actionsMenu(`registro de ${formatDate(entry.date)}`, [
+          { text: "Editar", onclick: () => timelineDialog(house, entry) },
+          { text: "Excluir", danger: true, onclick: () => remove(entry) }])),
+      h("div", { className: "thumbs" }, entry.photo_urls.map((url, i) => h("img", {
+        className: "photo-thumb", src: url, alt: `${entry.caption || formatDate(entry.date)} (${i + 1})`, loading: "lazy",
+        onclick: () => viewPhoto(url, `${formatDate(entry.date)}${entry.caption ? ` · ${entry.caption}` : ""}`) })))));
+    const [list, pager] = pagedRows(rows, { start: Math.ceil(rows.length / PAGE_SIZE) - 1, tag: "div" });
+    card.append(list, pager);
+    return card;
+  }
+
+  /** A moment of the timeline: its date, what it shows, the photos it has (each can be removed) and
+   *  new ones (several at once). */
+  function timelineDialog(house, entry) {
+    const date = h("input", { id: "t-date", type: "date", value: entry?.date || today() });
+    const caption = h("input", { id: "t-caption", maxLength: 200, value: entry?.caption || "",
+      placeholder: "Ex.: Telhado novo instalado" });
+    const kept = (entry?.photos || []).map((id, i) => ({ id, url: entry.photo_urls[i] }));
+    let chosen = [];
+    const thumbs = h("div", { className: "thumbs", id: "t-photos" });
+    const input = h("input", { id: "t-files", type: "file", accept: "image/*", multiple: true, className: "visually-hidden" });
+    const draw = () => render(thumbs,
+      kept.map((photo) => thumb(photo.url, () => { kept.splice(kept.indexOf(photo), 1); draw(); })),
+      chosen.map((file) => thumb(file.url, () => { URL.revokeObjectURL(file.url); chosen = chosen.filter((f) => f !== file); draw(); })));
+    const thumb = (url, onRemove) => h("div", { className: "thumb-edit" }, h("img", { className: "photo-thumb", src: url, alt: "" }),
+      h("button", { type: "button", className: "thumb-remove", "aria-label": "Tirar esta foto", onclick: onRemove }, "✕"));
+    input.addEventListener("change", () => {
+      chosen = chosen.concat([...input.files].map((file) => Object.assign(file, { url: URL.createObjectURL(file) })));
+      input.value = "";
+      draw();
+    });
+    draw();
+    const save = h("button", { className: "primary" }, "Salvar");
+    const dialog = openDialog(entry ? "Editar registro" : "Novo registro na timeline",
+      h("div", { className: "two-columns" },
+        h("div", {}, field("t-date", "Data", date)), h("div", {}, field("t-caption", "O que mostra (opcional)", caption))),
+      h("span", { className: "field-label" }, "Fotos (até 12)"), thumbs, input,
+      h("label", { htmlFor: "t-files", className: "file-button" }, "Escolher fotos"),
+      h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+    save.addEventListener("click", () => whileDisabled(save, async () => {
+      try {
+        if (kept.length + chosen.length === 0) throw new Error("Fotos: escolha ao menos uma.");
+        if (kept.length + chosen.length > 12) throw new Error("Fotos: no máximo 12 por registro.");
+        const photos = kept.map((photo) => photo.id);
+        for (const [i, file] of chosen.entries()) {
+          save.textContent = `Enviando foto ${i + 1} de ${chosen.length}…`;
+          photos.push(await uploadPhoto(house.id, file));
+        }
+        save.textContent = "Salvar";
+        const body = { date: date.value, caption: caption.value, photos };
+        const view = entry ? await api("PUT", `/houses/${house.id}/timeline/${entry.id}`, body)
+          : await api("POST", `/houses/${house.id}/timeline`, body);
+        notify("Registro salvo.");
+        dialog.close();
+        show(view);
+      } catch (error) { save.textContent = "Salvar"; notify(error.message, true); }
+    }));
+    (entry ? caption : input).focus();
   }
 
   /** Adds N monthly installments at once: "120 de R$ 2.500,00, a primeira em 10/02/2026". */

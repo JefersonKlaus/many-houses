@@ -8,7 +8,9 @@ default mode, which has no login and opens with the demo data.
 The texts used in the selectors ("Entrar", "Salvar", ...) are the app's labels, which are in Portuguese."""
 import json
 import re
+import struct
 import threading
+import zlib
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -53,6 +55,19 @@ def log_in(page, phone):
     page.fill("#l-password", "Another-Password-9")
     page.click("text=Definir senha")
     expect(page.locator("h1", has_text="Casas")).to_be_visible()
+
+
+def png(red, green, blue, size=40):
+    """A small solid-color PNG, to send as a photo."""
+    row = bytes([0]) + bytes([red, green, blue]) * size          # each row: no filter, then the pixels
+    chunk = lambda kind, data: (struct.pack(">I", len(data)) + kind + data  # noqa: E731
+                                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (bytes.fromhex("89504e470d0a1a0a") + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(row * size)) + chunk(b"IEND", b""))
+
+
+def photo(name, color):
+    return {"name": name, "mimeType": "image/png", "buffer": png(*color)}
 
 
 def watch(page, errors):
@@ -125,7 +140,7 @@ def run():
         assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
 
         # the page is in tabs: Reforma is open; Compra has the purchase's data
-        expect(page.locator("[role=tab]")).to_have_text(["Reforma", "Compra", "Prestações (0/3)", "Sócios"])
+        expect(page.locator("[role=tab]")).to_have_text(["Reforma", "Compra", "Prestações (0/3)", "Sócios", "Timeline"])
         expect(page.locator("#tab-renovation")).to_have_attribute("aria-selected", "true")
         expect(page.locator("#areas")).to_be_visible()
         expect(page.locator("#purchase")).to_be_hidden()
@@ -167,6 +182,9 @@ def run():
             page.select_option("#e-category", category)
             page.select_option("#e-area", label=area)
             page.fill("#e-amount", amount)
+            if description == "Pedreiro":                     # a photo of the NF (reduced to a JPEG and sent)
+                page.set_input_files("#e-nf", photo("nf.png", (200, 200, 200)))
+                expect(page.locator(".photo-field img").first).to_be_visible()     # its preview
             page.click("dialog >> text=Salvar")
             expect(page.locator("#expenses tbody")).to_contain_text(description)
         expect(page.locator("#house-totals")).to_contain_text("5.500,50")       # renovation
@@ -191,6 +209,33 @@ def run():
         page.locator(".menu-list:not([hidden]) [role=menuitem]", has_text="Excluir").click()
         expect(page.locator("#expenses tbody tr")).to_have_count(1)
         expect(page.locator("#house-totals")).to_contain_text("3.000,00")
+
+        # the NF photo: seen big
+        row = page.locator("#expenses tbody tr", has_text="Pedreiro")
+        row.locator("text=Ver NF").click()
+        expect(page.locator("dialog img.photo-big")).to_be_visible()
+        assert page.locator("dialog img.photo-big").evaluate("img => img.naturalWidth") == 40   # it loads
+        page.click("dialog >> text=Fechar")
+
+        # the timeline: a moment with two photos; then one of them is taken out
+        page.click("#tab-timeline")
+        expect(page.locator("#timeline")).to_contain_text("Registre aqui a evolução da casa")
+        page.click("text=Adicionar fotos")
+        page.fill("#t-caption", "Dia da compra")
+        page.set_input_files("#t-files", [photo("a.png", (180, 60, 60)), photo("b.png", (60, 60, 180))])
+        expect(page.locator("#t-photos img")).to_have_count(2)
+        page.click("dialog >> text=Salvar")
+        expect(page.locator("#timeline .moment")).to_have_count(1)
+        expect(page.locator("#timeline .moment")).to_contain_text("Dia da compra")
+        expect(page.locator("#timeline .moment img")).to_have_count(2)
+        expect(page.locator("#tab-timeline")).to_have_text("Timeline (1)")
+        page.locator("#timeline .moment .kebab").click()
+        page.locator(".menu-list:not([hidden]) [role=menuitem]", has_text="Editar").click()
+        expect(page.locator("#t-photos img")).to_have_count(2)
+        page.locator("#t-photos .thumb-remove").first.click()
+        page.click("dialog >> text=Salvar")
+        expect(page.locator("#timeline .moment img")).to_have_count(1)
+        page.click("#tab-renovation")
 
         # editing the house keeps its costs; the list shows its totals
         page.click("text=Editar casa")
@@ -324,6 +369,11 @@ def run_without_login():
         page.click("#tab-partners")
         expect(page.locator("#by-member tbody tr")).to_have_count(2)
         expect(page.locator("#by-member tbody tr").nth(1)).to_contain_text("93.600,00")   # half of the purchase
+        page.click("#tab-timeline")
+        expect(page.locator("#timeline .moment")).to_have_count(4)                     # from the purchase on
+        expect(page.locator("#timeline .moment").first).to_contain_text("Dia da compra")
+        page.click("#tab-renovation")
+        expect(page.locator("#expenses tbody tr", has_text="Madeiramento")).to_contain_text("Ver NF")
         width = page.evaluate("document.documentElement.scrollWidth")
         assert width <= 390, f"the page scrolls sideways on a phone ({width}px)"
 

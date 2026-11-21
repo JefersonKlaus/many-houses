@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Optional
 
-from houses_core.domain.models import Expense, House, Installment, PendingInvite
+from houses_core.domain.models import Expense, House, Installment, PendingInvite, TimelineEntry
 
 
 class MemoryRepository:
@@ -15,7 +15,7 @@ class MemoryRepository:
 
     def _owner(self, owner: str) -> dict[str, Any]:
         with self._lock:
-            return self._data.setdefault(owner, {"houses": {}, "expenses": {}, "installments": {}, "links": {}})
+            return self._data.setdefault(owner, {"houses": {}, "expenses": {}, "installments": {}, "links": {}, "timeline": {}})
 
     def list_houses(self, owner: str) -> list[House]:
         return list(self._owner(owner)["houses"].values())
@@ -79,3 +79,15 @@ class MemoryRepository:
 
     def delete_pending_invite(self, phone: str, id: str) -> None:
         self._invites.get(phone, {}).pop(id, None)
+
+    def list_timeline(self, owner: str, house_id: str) -> list[TimelineEntry]:
+        return [e for e in list(self._owner(owner)["timeline"].values()) if e.house_id == house_id]
+
+    def get_timeline_entry(self, owner: str, house_id: str, id: str) -> Optional[TimelineEntry]:
+        return self._owner(owner)["timeline"].get((house_id, id))
+
+    def save_timeline_entry(self, owner: str, entry: TimelineEntry) -> None:
+        self._owner(owner)["timeline"][(entry.house_id, entry.id)] = entry
+
+    def delete_timeline_entry(self, owner: str, house_id: str, id: str) -> None:
+        self._owner(owner)["timeline"].pop((house_id, id), None)

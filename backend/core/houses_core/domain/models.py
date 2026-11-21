@@ -23,6 +23,7 @@ PAYMENT_TYPES = ("cash", "installments")                                  # à v
 MAX_PROFIT_PERCENT = 1000
 MAX_AREAS = 30
 MAX_PARTNERS = 10
+MAX_TIMELINE_PHOTOS = 12        # photos in one timeline entry
 OWNER_MEMBER_ID = "00000000"    # the house's owner among its members (in `paid_by` and in the purchase shares)
 _PHONE_RE = re.compile(r"^[1-9]{2}\d{8,9}$")
 MAX_AREA_NAME = 40
@@ -38,7 +39,8 @@ FIELD_LABELS = {
     "down_payment_cents": "entrada", "due_date": "vencimento", "paid_date": "data do pagamento",
     "first_due_date": "primeiro vencimento", "count": "quantidade", "payment_type": "forma de pagamento",
     "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área", "paid_by": "pago por",
-    "phone": "celular",
+    "phone": "celular", "nf_photo": "foto da NF", "material_photo": "foto do material ou serviço",
+    "caption": "descrição",
 }
 
 
@@ -104,6 +106,19 @@ def phone_number(value: Any) -> str:
     if not isinstance(value, str) or not _PHONE_RE.match(value.strip()):
         raise ValidationError("celular: digite DDD + número, só os dígitos")
     return f"+55{value.strip()}"
+
+
+def photo_key(owner: str, house_id: str, photo_id: str) -> str:
+    """Where a photo is kept: under its house, so a house's records can only point at its own photos."""
+    return f"{owner}/{house_id}/{photo_id}.jpg"
+
+
+def _photo(payload: Mapping[str, Any], field: str) -> str:
+    """A photo's id (given by POST /houses/{id}/photos); "" for none."""
+    value = payload.get(field) or ""
+    if not isinstance(value, str) or (value and not ITEM_ID_RE.match(value)):
+        raise ValidationError(f"{FIELD_LABELS[field]}: envie a foto de novo")
+    return value
 
 
 def _member_id(payload: Mapping[str, Any], field: str = "paid_by") -> str:
@@ -331,6 +346,12 @@ class Expense:
     supplier: str = ""
     area_id: str = ""               # one of the house's areas; "" = not linked to an area
     paid_by: str = ""               # the member who paid it; "" = the owner
+    nf_photo: str = ""              # a photo of the invoice (nota fiscal); "" = none
+    material_photo: str = ""        # a photo of the material or of the work done; "" = none
+
+    @property
+    def photos(self) -> list[str]:
+        return [p for p in (self.nf_photo, self.material_photo) if p]
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], house_id: str, id: Optional[str] = None) -> "Expense":
@@ -340,7 +361,8 @@ class Expense:
         return cls(id or new_id(), house_id, parse_date(payload.get("date")),
                    _choice(payload, "category", EXPENSE_CATEGORIES),
                    _text(payload, "description", 120), _cents(payload, "amount_cents", minimum=1),
-                   _text(payload, "supplier", 80, required=False), area_id, _member_id(payload))
+                   _text(payload, "supplier", 80, required=False), area_id, _member_id(payload),
+                   _photo(payload, "nf_photo"), _photo(payload, "material_photo"))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -348,7 +370,8 @@ class Expense:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "Expense":
         return cls(d["id"], d["house_id"], d["date"], d["category"], d["description"], d["amount_cents"],
-                   d.get("supplier", ""), d.get("area_id", ""), d.get("paid_by", ""))
+                   d.get("supplier", ""), d.get("area_id", ""), d.get("paid_by", ""),
+                   d.get("nf_photo", ""), d.get("material_photo", ""))
 
 
 @dataclass(frozen=True)
@@ -390,3 +413,31 @@ class Installment:
     def from_dict(cls, d: Mapping[str, Any]) -> "Installment":
         return cls(d["id"], d["house_id"], d["due_date"], d["amount_cents"], d.get("paid_date", ""),
                    d.get("paid_by", ""))
+
+
+@dataclass(frozen=True)
+class TimelineEntry:
+    """A moment of the house's story, from the purchase to the end of the renovation: a date, what it
+    shows and its photos."""
+    id: str
+    house_id: str
+    date: str
+    caption: str
+    photos: tuple[str, ...]
+
+    @classmethod
+    def from_input(cls, payload: Mapping[str, Any], house_id: str, id: Optional[str] = None) -> "TimelineEntry":
+        photos = payload.get("photos")
+        if not isinstance(photos, list) or not 1 <= len(photos) <= MAX_TIMELINE_PHOTOS:
+            raise ValidationError(f"fotos: de 1 a {MAX_TIMELINE_PHOTOS} por registro")
+        if any(not isinstance(p, str) or not ITEM_ID_RE.match(p) for p in photos) or len(set(photos)) != len(photos):
+            raise ValidationError("fotos: envie as fotos de novo")
+        return cls(id or new_id(), house_id, parse_date(payload.get("date")),
+                   _text(payload, "caption", 200, required=False), tuple(photos))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "photos": list(self.photos)}
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "TimelineEntry":
+        return cls(d["id"], d["house_id"], d["date"], d.get("caption", ""), tuple(d.get("photos", ())))

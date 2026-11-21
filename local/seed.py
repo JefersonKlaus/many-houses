@@ -3,7 +3,8 @@ different stages (one being renovated, one ready, one sold, one just bought) wit
 Two of them were bought in installments: an entrada and monthly prestações, the ones already due are paid.
 Each house has the areas that needed renovation, and most costs are linked to one of them.
 The Sobrado was bought with a partner (each one paid part of it), and another partner sent an invite
-for one of their houses, waiting to be accepted.
+for one of their houses, waiting to be accepted. The Sobrado also has a timeline of photos, from the
+purchase on, and photos of the invoice and of the material on two of its costs (drawn, not real photos).
 
 Dates are relative to today, so the data always looks recent. Only used by `python local/server.py`
 (and `python dev.py serve`); the tests start from an empty database."""
@@ -13,7 +14,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 
 from houses_core.domain.models import (OWNER_MEMBER_ID, Area, Expense, House, Installment, Invite, Partner,
-                                       PendingInvite, Share, add_months, new_id)
+                                       PendingInvite, Share, TimelineEntry, add_months, new_id, photo_key)
 from houses_core.ports import Dependencies
 
 R = 100     # R$ 1,00 in cents
@@ -121,11 +122,45 @@ def seed(deps: Dependencies, owner: str, today: date, phone: str = "", user_name
                         for n, due in enumerate(dues)]
         deps.repo.save_installments(owner, installments)
         for ago, category, description, supplier, amount in expenses:
+            photos = {"nf_photo": "", "material_photo": ""}
+            if shared and description in PHOTOS_OF_COSTS:
+                photos = {field: picture(deps, owner, house.id, text, color)
+                          for field, (text, color) in PHOTOS_OF_COSTS[description].items()}
             deps.repo.save_expense(owner, Expense(new_id(), house.id, (today - timedelta(days=ago)).isoformat(),
                                                   category, description, amount, supplier,
                                                   area_of.get(description, ""),
-                                                  PARTNER_ID if shared and description in PAID_BY_PARTNER else ""))
+                                                  PARTNER_ID if shared and description in PAID_BY_PARTNER else "",
+                                                  **photos))
+        if shared:
+            for ago, caption, pictures in TIMELINE:
+                deps.repo.save_timeline_entry(owner, TimelineEntry(
+                    new_id(), house.id, (today - timedelta(days=ago)).isoformat(), caption,
+                    tuple(picture(deps, owner, house.id, text, color) for text, color in pictures)))
     invite_waiting(deps, today, phone)
+
+
+# The Sobrado's timeline: days ago, what it shows, its pictures (text, color)
+TIMELINE = [
+    (45, "Dia da compra: a casa como estava", [("Fachada", "#8d6e63"), ("Sala", "#a1887f"), ("Telhado", "#6d4c41")]),
+    (30, "Telhado antigo retirado", [("Sem telhado", "#c25e00")]),
+    (20, "Madeiramento e telhas novas", [("Madeiramento", "#1d6b5a"), ("Telhas", "#2e7d32")]),
+    (5, "Rede hidráulica trocada", [("Hidráulica", "#3f51b5")]),
+]
+PHOTOS_OF_COSTS = {         # cost: {field: (text, color)}
+    "Madeiramento e telhas": {"nf_photo": ("NF 1234", "#757575"), "material_photo": ("Telhas", "#2e7d32")},
+    "Tubos e conexões hidráulicas": {"nf_photo": ("NF 5678", "#757575")},
+}
+
+
+def picture(deps: Dependencies, owner: str, house_id: str, text: str, color: str) -> str:
+    """A drawn "photo" (an SVG with a color and a text) kept like an uploaded one. Returns its id."""
+    photo_id = new_id()
+    if deps.photos is not None:
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" '
+               f'fill="{color}"/><text x="400" y="320" font-size="64" font-family="sans-serif" fill="#fff" '
+               f'text-anchor="middle">{text}</text></svg>')
+        deps.photos.put(photo_key(owner, house_id, photo_id), "image/svg+xml", svg.encode())
+    return photo_id
 
 
 def invite_waiting(deps: Dependencies, today: date, phone: str) -> None:

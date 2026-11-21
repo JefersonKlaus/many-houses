@@ -2,6 +2,7 @@
 
 PK = OWNER#<owner>   SK = HOUSE#<house id> | EXP#<house id>#<expense id> | INST#<house id>#<installment id>
                      | LINK#<house id>  (a house of another owner this user is a partner in)
+                     | TL#<house id>#<entry id>  (the house's timeline)
 PK = PHONE#<phone>   SK = INVITE#<invite id>  (an invite waiting for whoever logs in with that phone)
 
 The item stores the whole object as JSON in the `data` attribute. One house's costs are one query
@@ -14,10 +15,10 @@ import json
 import time
 from typing import Any, Optional
 
-from ..domain.models import Expense, House, Installment, PendingInvite
+from ..domain.models import Expense, House, Installment, PendingInvite, TimelineEntry
 
 OWNER_PREFIX, HOUSE_PREFIX, EXPENSE_PREFIX, INSTALLMENT_PREFIX = "OWNER#", "HOUSE#", "EXP#", "INST#"
-LINK_PREFIX, PHONE_PREFIX, INVITE_PREFIX = "LINK#", "PHONE#", "INVITE#"
+LINK_PREFIX, PHONE_PREFIX, INVITE_PREFIX, TIMELINE_PREFIX = "LINK#", "PHONE#", "INVITE#", "TL#"
 DATA_ATTRIBUTE = "data"
 BATCH_SIZE = 25                 # the most BatchWriteItem takes in one call
 BATCH_ATTEMPTS = 8
@@ -142,3 +143,17 @@ class DynamoRepository:
 
     def delete_pending_invite(self, phone: str, id: str) -> None:
         self._delete(phone, f"{INVITE_PREFIX}{id}", PHONE_PREFIX)
+
+    # -------------------------------------------------------------- timeline
+    def list_timeline(self, owner: str, house_id: str) -> list[TimelineEntry]:
+        return [TimelineEntry.from_dict(d) for d in self._query_prefix(owner, f"{TIMELINE_PREFIX}{house_id}#")]
+
+    def get_timeline_entry(self, owner: str, house_id: str, id: str) -> Optional[TimelineEntry]:
+        data = self._read(owner, f"{TIMELINE_PREFIX}{house_id}#{id}")
+        return TimelineEntry.from_dict(data) if data else None
+
+    def save_timeline_entry(self, owner: str, entry: TimelineEntry) -> None:
+        self._put(owner, f"{TIMELINE_PREFIX}{entry.house_id}#{entry.id}", entry.to_dict())
+
+    def delete_timeline_entry(self, owner: str, house_id: str, id: str) -> None:
+        self._delete(owner, f"{TIMELINE_PREFIX}{house_id}#{id}")

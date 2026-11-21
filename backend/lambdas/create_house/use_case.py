@@ -33,4 +33,4 @@ def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phon
     for invite in invites:
         deps.repo.save_pending_invite(PendingInvite(invite.id, invite.phone, user, house.id, house.name, phone,
                                                     invite.date, name))
-    return house_view(deps.repo, Access(user, house, OWNER_MEMBER_ID))
+    return house_view(deps, Access(user, house, OWNER_MEMBER_ID))

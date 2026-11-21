@@ -3,9 +3,9 @@ adapters/dynamo_repository.py implements Repository in AWS; local/memory_reposit
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
-from .domain.models import Expense, House, Installment, PendingInvite
+from .domain.models import Expense, House, Installment, PendingInvite, TimelineEntry
 
 
 class Repository(Protocol):
@@ -30,6 +30,11 @@ class Repository(Protocol):
         """Saves many at once (a whole payment plan): one call, not one per installment."""
     def delete_installments(self, owner: str, house_id: str, ids: list[str]) -> None: ...
 
+    def list_timeline(self, owner: str, house_id: str) -> list[TimelineEntry]: ...
+    def get_timeline_entry(self, owner: str, house_id: str, id: str) -> Optional[TimelineEntry]: ...
+    def save_timeline_entry(self, owner: str, entry: TimelineEntry) -> None: ...
+    def delete_timeline_entry(self, owner: str, house_id: str, id: str) -> None: ...
+
     def save_link(self, user: str, owner: str, house_id: str) -> None:
         """`user` is a partner in `owner`'s house."""
     def get_link(self, user: str, house_id: str) -> Optional[str]:
@@ -45,7 +50,21 @@ class Repository(Protocol):
     def delete_pending_invite(self, phone: str, id: str) -> None: ...
 
 
+class PhotoStorage(Protocol):
+    """Where the photos are (S3 in AWS). The browser sends each photo straight to it, with a form signed
+    here, and shows it through a link that is only valid for a while: the photos are never public."""
+
+    def upload_form(self, key: str) -> dict[str, Any]:
+        """{"url", "fields"}: a form the browser posts the photo to (a JPEG, up to a size limit)."""
+    def view_url(self, key: str) -> str:
+        """A link to see the photo, valid for a while."""
+    def delete(self, keys: list[str]) -> None: ...
+    def delete_prefix(self, prefix: str) -> None:
+        """Every photo whose key starts with `prefix` (all of a house's)."""
+
+
 @dataclass(frozen=True)
 class Dependencies:
     """What every use case receives: the ports, already plugged into their adapters."""
     repo: Repository
+    photos: Optional[PhotoStorage] = None       # without it (some tests) no photo links are given

@@ -26,4 +26,4 @@ def delete_invite(deps: Dependencies, user: str, house_id: str, id: str) -> dict
     house = replace(access.house, invites=tuple(i for i in access.house.invites if i.id != id))
     deps.repo.save_house(owner, house)
     deps.repo.delete_pending_invite(invite.phone, id)
-    return house_view(deps.repo, Access(owner, house, access.member_id))
+    return house_view(deps, Access(owner, house, access.member_id))

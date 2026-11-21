@@ -73,6 +73,38 @@ data "aws_iam_policy_document" "lambda_read_access" {
   }
 }
 
+# The photos: the write Lambdas sign upload forms (s3:PutObject) and delete photos; the read ones only sign
+# the links to see them (s3:GetObject).
+data "aws_iam_policy_document" "lambda_photos" {
+  statement {
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.photos.arn}/*"]
+  }
+  statement {
+    actions   = ["s3:ListBucket"] # to delete all of a house's photos
+    resources = [aws_s3_bucket.photos.arn]
+  }
+}
+
+data "aws_iam_policy_document" "lambda_read_photos" {
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.photos.arn}/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_photos" {
+  name   = "photos"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.lambda_photos.json
+}
+
+resource "aws_iam_role_policy" "lambda_read_photos" {
+  name   = "photos"
+  role   = aws_iam_role.lambda_read.id
+  policy = data.aws_iam_policy_document.lambda_read_photos.json
+}
+
 resource "aws_iam_role_policy" "lambda_data" {
   name   = "data"
   role   = aws_iam_role.lambda.id
@@ -112,7 +144,7 @@ resource "aws_lambda_function" "action" {
   timeout     = 10
 
   environment {
-    variables = { TABLE_NAME = aws_dynamodb_table.data.name }
+    variables = { TABLE_NAME = aws_dynamodb_table.data.name, PHOTOS_BUCKET = aws_s3_bucket.photos.bucket }
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda, aws_iam_role_policy_attachment.lambda_logs]

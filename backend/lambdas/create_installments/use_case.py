@@ -17,4 +17,4 @@ def create_installments(deps: Dependencies, user: str, house_id: str,
     installments = Installment.plan(payload, house_id)
     check_installment_limit(deps.repo, access.owner, house_id, len(installments))
     deps.repo.save_installments(access.owner, installments)
-    return house_view(deps.repo, access)
+    return house_view(deps, access)

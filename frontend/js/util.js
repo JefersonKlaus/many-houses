@@ -122,3 +122,9 @@ export function openDialog(title, ...children) {
   dialog.showModal();
   return dialog;
 }
+
+/** Shows a photo big, in a dialog (click outside or "Fechar" closes it). */
+export function viewPhoto(url, title = "Foto") {
+  const dialog = openDialog(title, h("img", { className: "photo-big", src: url, alt: title }),
+    h("div", { className: "actions" }, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+}

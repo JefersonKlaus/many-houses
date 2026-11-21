@@ -12,4 +12,4 @@ def delete_installment(deps: Dependencies, user: str, house_id: str, id: str) ->
     access = house_access(deps.repo, user, house_id)
     get_installment(deps.repo, access, id)
     deps.repo.delete_installments(access.owner, house_id, [id])
-    return house_view(deps.repo, access)
+    return house_view(deps, access)

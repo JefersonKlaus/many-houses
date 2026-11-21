@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "local"))                  # MemoryRepository and 
 import api_gateway  # noqa: E402,F401  (puts backend/core and backend/lambdas on the path, like each zip)
 from houses_core.adapters.dynamo_repository import DynamoRepository  # noqa: E402
 from houses_core.ports import Dependencies  # noqa: E402
+from memory_photos import MemoryPhotos  # noqa: E402
 from memory_repository import MemoryRepository  # noqa: E402
 
 OWNER = "owner-a"
@@ -73,7 +74,7 @@ def repo(request):
 
 @pytest.fixture
 def deps(repo):
-    return Dependencies(repo)
+    return Dependencies(repo, MemoryPhotos())
 
 
 def house_input(**extra):

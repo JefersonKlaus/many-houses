@@ -43,12 +43,13 @@ export function pagedList(items, row, { label, searchText = (item) => item.name 
   return h("div", { className: "card list-card" }, search, list, nothingFound, pager);
 }
 
-/** The same pages for a table: `rows` are its <tr>s, PAGE_SIZE at a time. Returns [tbody, pager]: the
- *  pager goes right after the table. `start`: the page to open on (e.g. the one of the next installment). */
-export function pagedRows(rows, { start = 0 } = {}) {
+/** The same pages for a table: `rows` are its <tr>s (or any rows, inside a `tag` other than <tbody>),
+ *  PAGE_SIZE at a time. Returns [tbody, pager]: the pager goes right after the table. `start`: the page
+ *  to open on (e.g. the one of the next installment). */
+export function pagedRows(rows, { start = 0, tag = "tbody" } = {}) {
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   let page = Math.min(Math.max(0, start), pages - 1);
-  const body = h("tbody");
+  const body = h(tag);                            // a <tbody>, or e.g. a <div> for a list of cards
   const pager = h("div", { className: "pager", role: "navigation", "aria-label": "Páginas" });
   const draw = () => {
     render(body, rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));

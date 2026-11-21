@@ -33,4 +33,4 @@ def create_invite(deps: Dependencies, user: str, house_id: str, payload: Mapping
     deps.repo.save_house(access.owner, house)
     deps.repo.save_pending_invite(PendingInvite(invite.id, guest, access.owner, house.id, house.name,
                                                 phone, invite.date, name))     # from whoever invited
-    return house_view(deps.repo, Access(access.owner, house, access.member_id))
+    return house_view(deps, Access(access.owner, house, access.member_id))

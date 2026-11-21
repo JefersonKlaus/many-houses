@@ -10,4 +10,4 @@ from houses_core.ports import Dependencies
 
 
 def get_house(deps: Dependencies, user: str, id: str) -> dict[str, Any]:
-    return house_view(deps.repo, house_access(deps.repo, user, id))
+    return house_view(deps, house_access(deps.repo, user, id))

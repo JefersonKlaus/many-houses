@@ -146,6 +146,31 @@ button.link.danger-link { padding: 4px 0; color: var(--danger); width: auto; }
   #by-member tfoot tr { border-bottom: 0; }
 }
 .notice-warn { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; color: var(--warn); background: var(--warn-light); }
+/* photos: a cost's NF and material, the timeline */
+.photo-fields { margin-top: 6px; }
+.photo-field { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.photo-field label { margin-bottom: 0; }
+.field-label { display: block; margin: 10px 0 4px; font-size: .9rem; color: var(--muted); }
+.photo-actions { display: flex; align-items: center; gap: 12px; }
+.file-button { display: inline-block; margin: 0; padding: 6px 12px; border: 1px solid var(--brand); border-radius: 8px;
+  color: var(--brand); font-size: .9rem; cursor: pointer; }
+.file-button:hover { background: var(--brand-light); }
+input:focus-visible + .file-button { outline: 3px solid var(--brand); outline-offset: 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.photo-thumb { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--background); cursor: zoom-in; }
+.photo-big { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto 8px; border-radius: 8px; }
+.photo-links { display: flex; gap: 12px; }
+.photo-links button.link { width: auto; padding: 2px 0; color: var(--brand); font-size: .85rem; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.thumb-edit { position: relative; }
+.thumb-remove { position: absolute; top: -6px; right: -6px; width: 26px; height: 26px; border-radius: 50%; border: 0;
+  background: var(--danger); color: #fff; cursor: pointer; line-height: 1; }
+.moment { padding: 10px 0; border-top: 1px solid var(--border); }
+.moment:first-child { border-top: 0; }
+.moment-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.moment-head p { margin: 2px 0 0; }
 /* the suggested sale price */
 .card.sale { border-color: var(--brand); background: var(--brand-light); }
 .sale-label { display: block; color: var(--brand); font-weight: 600; }

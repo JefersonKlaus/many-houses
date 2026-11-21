@@ -42,8 +42,9 @@ python dev.py all     # both: what CI runs
 ```
 Browser ──► CloudFront ──► S3                 the site (HTML/CSS/JS, no build)
    │
-   └──► API Gateway ──► one Lambda per action ──► DynamoDB
-        (checks the Cognito login)
+   ├──► API Gateway ──► one Lambda per action ──► DynamoDB
+   │    (checks the Cognito login)          └──► signs photo uploads and links
+   └──► S3 (photos, private) ◄── each photo posted straight to it, with a form the API signed
 ```
 
 ```
@@ -80,7 +81,7 @@ everything else lives in a shared core, copied into every Lambda's zip.
 ```
 backend/
   core/houses_core/
-    domain/          entities (House and its Areas, Expense, Installment) and validation, pure Python
+    domain/          entities (House and its Areas, Expense, Installment, TimelineEntry) and validation
     ports.py         what use cases need: the Repository
     application.py   rules shared by several use cases (lookups, limits, totals)
     adapters/        DynamoDB, API Gateway input (login, ids, errors)
@@ -88,7 +89,8 @@ backend/
                      create_expense, update_expense, delete_expense,
                      create_installments, update_installment, delete_installment,
                      create_invite, delete_invite, list_invites, accept_invite, decline_invite,
-                     remove_partner
+                     remove_partner,
+                     create_photo_upload, create_timeline_entry, update_timeline_entry, delete_timeline_entry
     use_case.py      the action (only domain + ports, never AWS)
     handler.py       API Gateway event -> use case -> HTTP response
     lambda.json      {"route": "POST /houses", "database": "write"}
@@ -103,6 +105,8 @@ backend/
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
 | `POST /houses/{id}/installments` | add N monthly installments at once (`count`, `amount_cents`, `first_due_date`) |
 | `PUT` · `DELETE /houses/{id}/installments/{installment_id}` | change (or mark as paid: `paid_date`, `paid_by`), delete an installment |
+| `POST /houses/{id}/photos` | a form to send one photo straight to S3: `{id, upload: {url, fields}}` |
+| `POST /houses/{id}/timeline` · `PUT` · `DELETE /houses/{id}/timeline/{entry_id}` | the timeline: a date, a caption and photos (by id) |
 | `POST /houses/{id}/invites` · `DELETE /houses/{id}/invites/{invite_id}` | invite a partner by phone, cancel an invite |
 | `GET /invites` · `POST /invites/{id}/accept` · `POST /invites/{id}/decline` | the invites sent to the login's phone; accept, decline one |
 | `DELETE /houses/{id}/partners/{partner_id}` | remove another partner with nothing paid registered |
@@ -138,10 +142,15 @@ Rules worth knowing:
 - A house lists the areas that need renovation (`areas`: the names; the API gives each an id, kept
   while the name is the same, ignoring case). A cost may be linked to one (`area_id`). An area with
   costs can't be removed until they move to another area or to none.
-- Deleting a house deletes its costs, installments, partners' links and pending invites first, so no
-  orphan is left behind.
+- Photos: a cost may have `nf_photo` (the invoice) and `material_photo` (the material or the work);
+  a timeline entry has 1 to 12. The screen reduces each photo to a JPEG of up to 1600 px, asks the API
+  for a signed form (only a JPEG, up to 8 MB, only at `<owner>/<house id>/<photo id>.jpg`) and posts
+  it straight to the private photos bucket; the house's page brings links to see them that expire in
+  an hour. A photo replaced or removed, and every photo of what is deleted, is deleted from S3.
+- Deleting a house deletes its costs, installments, timeline, photos, partners' links and pending
+  invites first, so no orphan is left behind.
 - DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>`, `EXP#<house id>#<id>`,
-  `INST#<house id>#<id>` or `LINK#<house id>` (a partner's link to the owner's house, which stays in
+  `INST#<house id>#<id>`, `TL#<house id>#<id>` (timeline) or `LINK#<house id>` (a partner's link to the owner's house, which stays in
   the owner's partition); `PK = PHONE#<phone>`, `SK = INVITE#<id>` for the invites waiting. A payment
   plan is written with `BatchWriteItem`, 25 items per call.
 - Every list and table shows 10 rows a page. Sold houses are hidden from the list until asked for,
