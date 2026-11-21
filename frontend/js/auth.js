@@ -5,8 +5,8 @@ import { CONFIG } from "./config.js";
 
 const STORAGE_KEY = "houses.tokens";
 const MESSAGES = {
-  NotAuthorizedException: "E-mail ou senha incorretos.",
-  UserNotFoundException: "E-mail ou senha incorretos.",
+  NotAuthorizedException: "Celular ou senha incorretos.",
+  UserNotFoundException: "Celular ou senha incorretos.",
   InvalidPasswordException: "A senha precisa ter 10 caracteres, com maiúscula, minúscula e número.",
   TooManyRequestsException: "Muitas tentativas. Espere um pouco.",
   LimitExceededException: "Muitas tentativas. Espere um pouco.",
@@ -41,19 +41,26 @@ function load() {
   return cached;
 }
 
+/** "11987654321" (DDD + number, digits only) -> "+5511987654321", the login's Cognito username. */
+export function phoneToUsername(digits) {
+  if (!/^[1-9]{2}\d{8,9}$/.test(digits)) throw new Error("Celular inválido: digite DDD + número, só os dígitos.");
+  return `+55${digits}`;
+}
+
 /** Returns {challenge} if Cognito asks for a new password (first access), otherwise stores the tokens. */
-export async function signIn(email, password) {
+export async function signIn(phone, password) {
+  const username = phoneToUsername(phone);
   const r = await cognito("InitiateAuth", {
-    AuthFlow: "USER_PASSWORD_AUTH", AuthParameters: { USERNAME: email, PASSWORD: password } });
-  if (r.ChallengeName === "NEW_PASSWORD_REQUIRED") return { challenge: { session: r.Session, email } };
+    AuthFlow: "USER_PASSWORD_AUTH", AuthParameters: { USERNAME: username, PASSWORD: password } });
+  if (r.ChallengeName === "NEW_PASSWORD_REQUIRED") return { challenge: { session: r.Session, username } };
   store(r.AuthenticationResult);
   return {};
 }
 
-export async function setNewPassword({ session, email }, password) {
+export async function setNewPassword({ session, username }, password) {
   const r = await cognito("RespondToAuthChallenge", {
     ChallengeName: "NEW_PASSWORD_REQUIRED", Session: session,
-    ChallengeResponses: { USERNAME: email, NEW_PASSWORD: password } });
+    ChallengeResponses: { USERNAME: username, NEW_PASSWORD: password } });
   store(r.AuthenticationResult);
 }
 

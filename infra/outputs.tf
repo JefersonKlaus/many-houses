@@ -7,7 +7,7 @@ output "api_url" {
 }
 
 output "cognito_user_pool_id" {
-  value = aws_cognito_user_pool.users.id
+  value = aws_cognito_user_pool.login.id
 }
 
 output "cognito_client_id" {

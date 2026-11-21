@@ -1,7 +1,10 @@
-resource "aws_cognito_user_pool" "users" {
+# The login is the phone number (+55 + DDD + number); the e-mail only receives the temporary password
+# and the password-recovery code. Cognito can't change a pool's login attribute, so this is a new pool:
+# the old e-mail one ("-users") is only dropped from Terraform, never deleted (see `removed` below).
+resource "aws_cognito_user_pool" "login" {
   # The create-user workflow looks the pool up by this name.
-  name                     = "${local.prefix}-users"
-  username_attributes      = ["email"]
+  name                     = "${local.prefix}-login"
+  username_attributes      = ["phone_number"]
   auto_verified_attributes = ["email"]
   deletion_protection      = var.environment == "prod" ? "ACTIVE" : "INACTIVE"
 
@@ -27,9 +30,18 @@ resource "aws_cognito_user_pool" "users" {
   }
 }
 
+# The old e-mail login pool: Terraform forgets it without deleting it (its logins stay in AWS until
+# someone deletes the "<prefix>-users" pool by hand, in the Cognito console).
+removed {
+  from = aws_cognito_user_pool.users
+  lifecycle {
+    destroy = false
+  }
+}
+
 resource "aws_cognito_user_pool_client" "site" {
   name            = "${local.prefix}-site"
-  user_pool_id    = aws_cognito_user_pool.users.id
+  user_pool_id    = aws_cognito_user_pool.login.id
   generate_secret = false # a browser app cannot keep a secret
 
   explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]

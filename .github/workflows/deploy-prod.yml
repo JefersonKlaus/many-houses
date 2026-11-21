@@ -24,7 +24,7 @@ permissions:
 jobs:
   guard:
     name: Check branch (and the confirmation, when run by hand)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned: Playwright has no Chromium for newer Ubuntu yet
     steps:
       - name: Only main; by hand, only with confirmation
         env:
