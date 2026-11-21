@@ -88,7 +88,7 @@ backend/
                      create_expense, update_expense, delete_expense,
                      create_installments, update_installment, delete_installment,
                      create_invite, delete_invite, list_invites, accept_invite, decline_invite,
-                     remove_partner, update_shares
+                     remove_partner
     use_case.py      the action (only domain + ports, never AWS)
     handler.py       API Gateway event -> use case -> HTTP response
     lambda.json      {"route": "POST /houses", "database": "write"}
@@ -97,7 +97,7 @@ backend/
 | Route | What it does |
 |---|---|
 | `GET /houses` | every house, each with its totals (purchase, renovation, total) |
-| `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register (bought in installments: with its plan, `installments`), change, delete a house (with its costs) |
+| `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register (bought in installments: with its plan, `installments`; bought with partners: `owner_share_cents` and `partners` [{phone, cents}]), change, delete a house (with its costs) |
 | `GET /houses/{id}` | one house: its costs (newest first), its installments (in due order) and its totals |
 | `POST /houses/{id}/expenses` | add a renovation cost |
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
@@ -106,7 +106,6 @@ backend/
 | `POST /houses/{id}/invites` · `DELETE /houses/{id}/invites/{invite_id}` | invite a partner by phone, cancel an invite (owner only) |
 | `GET /invites` · `POST /invites/{id}/accept` · `POST /invites/{id}/decline` | the invites sent to the login's phone; accept, decline one |
 | `DELETE /houses/{id}/partners/{partner_id}` | remove a partner with nothing paid registered (owner only) |
-| `PUT /houses/{id}/shares` | how much of the purchase each member paid (`shares`: `member_id`, `cents`) |
 
 Every change to a house (all but `DELETE /houses/{id}`) answers the same thing as `GET /houses/{id}`:
 the screen draws the house's page from that answer, with no second request.
@@ -118,11 +117,15 @@ Rules worth knowing:
 
 - The user comes from the login token (`sub`, and `phone_number` for invites), never from the request:
   each login sees only its houses and the ones it is a partner in.
-- Partners: the owner invites by phone; the invite waits under that phone (even before that person
-  has a login) and shows on top of their list to accept or decline. A partner sees and changes
-  everything in the house except deleting it and inviting or removing partners (403). Each cost and
-  paid installment has `paid_by` (a member; empty = the owner; by default whoever registers it);
-  with the purchase shares, `totals.by_member` says how much each one put in.
+- Partners: a house registered as bought with partners says how much each one paid at the purchase
+  (what was paid up front: cash price or entrada, plus the costs; the shares must add up to it). That
+  split is only set when registering. Each partner is invited by phone; the invite waits under that
+  phone (even before that person has a login) and shows on top of their list to accept or decline;
+  accepting, they keep the invite's id, so their share stays theirs. The owner can invite more
+  partners later (they have no share of the purchase). A partner sees and changes everything in the
+  house except deleting it and inviting or removing partners (403). Each cost and paid installment
+  has `paid_by` (a member; empty = the owner; by default whoever registers it); with the purchase
+  shares, `totals.by_member` says how much each one put in.
 - The login is the phone: the screen takes DDD + number (digits only) and sends `+55<digits>` to Cognito.
 - Money is always integer cents (`purchase_price_cents`, `amount_cents`...), never a float.
 - Purchase = price + purchase costs. Total invested = purchase + every renovation cost.
@@ -139,7 +142,7 @@ Rules worth knowing:
   `INST#<house id>#<id>` or `LINK#<house id>` (a partner's link to the owner's house, which stays in
   the owner's partition); `PK = PHONE#<phone>`, `SK = INVITE#<id>` for the invites waiting. A payment
   plan is written with `BatchWriteItem`, 25 items per call.
-- Every list and table shows 10 rows a page.
+- Every list and table shows 10 rows a page. Sold houses are hidden from the list until asked for.
 
 ### Local
 

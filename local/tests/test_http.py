@@ -80,18 +80,26 @@ def test_partners_over_http(api):
     status, body = call(api, "DELETE", f"/houses/{hid}", owner="owner-b")
     assert status == 403 and "dono" in body["error"]
     partner = view["me"]
-    status, view = call(api, "PUT", f"/houses/{hid}/shares", {"shares": [{"member_id": partner, "cents": 100}]},
-                        owner="owner-b")
-    assert status == 200 and view["house"]["purchase_shares"] == [{"member_id": partner, "cents": 100}]
+    status, view = call(api, "POST", f"/houses/{hid}/expenses", {**expense_input(), "paid_by": partner}, owner="owner-b")
+    assert status == 201
     status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "31933333333"}, phone="+5511911111111")
     invite_id = view["house"]["invites"][0]["id"]
     assert call(api, "POST", f"/invites/{invite_id}/decline", {}, owner="owner-c", phone="+5531933333333") == (204, None)
     status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "31933333333"}, phone="+5511911111111")
     assert call(api, "DELETE", f"/houses/{hid}/invites/{view['house']['invites'][0]['id']}")[0] == 200
     status, view = call(api, "DELETE", f"/houses/{hid}/partners/{partner}")
-    assert status == 400 and "pagamentos" in view["error"]                          # the share of the purchase
-    call(api, "PUT", f"/houses/{hid}/shares", {"shares": []})
+    assert status == 400 and "pagamentos" in view["error"]                          # the cost they paid
+    expense = call(api, "GET", f"/houses/{hid}")[1]["expenses"][0]
+    call(api, "PUT", f"/houses/{hid}/expenses/{expense['id']}", {**expense, "paid_by": "00000000"})  # the owner paid it
     assert call(api, "DELETE", f"/houses/{hid}/partners/{partner}")[1]["members"][1:] == []
+
+
+def test_house_bought_with_partners_over_http(api):
+    body = {**house_input(), "owner_share_cents": 21_800_000, "partners": [{"phone": "21922222222", "cents": 10_000_000}]}
+    status, view = call(api, "POST", "/houses", body, phone="+5511911111111")
+    assert status == 201 and [m["role"] for m in view["members"]] == ["owner", "invited"]
+    assert call(api, "GET", "/invites", owner="owner-b", phone="+5521922222222")[1][0]["house_name"] == "Casa Azul"
+    assert call(api, "PUT", f"/houses/{view['house']['id']}/shares", {"shares": []})[0] == 404     # no later split
 
 
 def test_validation_is_400_with_a_message(api):

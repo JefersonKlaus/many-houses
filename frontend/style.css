@@ -127,6 +127,9 @@ fieldset.choices legend { padding: 0; margin-bottom: 4px; font-size: .9rem; colo
 .members li.pending { color: var(--muted); }
 button.link.danger-link { padding: 4px 0; color: var(--danger); width: auto; }
 .invite-form { margin-top: 12px; }
+.buyers-fields .partner-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 8px; }
+.buyers-fields > .secondary { margin-bottom: 4px; }
+#toggle-sold { width: auto; color: var(--brand); }
 @media (max-width: 640px) {
   /* how much each partner put in: one block per member, the total on the right, the parts below */
   #by-member thead { display: none; }

@@ -19,7 +19,6 @@ from remove_partner.use_case import remove_partner
 from update_expense.use_case import update_expense
 from update_house.use_case import update_house
 from update_installment.use_case import update_installment
-from update_shares.use_case import update_shares
 
 OWNER_PHONE, OTHER_PHONE, THIRD, THIRD_PHONE = "+5511911111111", "+5521922222222", "owner-c", "+5531933333333"
 
@@ -153,18 +152,62 @@ def test_who_paid_what(deps):
     assert next(e for e in view["expenses"] if e["id"] == eid)["paid_by"] == partner
 
 
-def test_purchase_shares(deps):
-    hid, partner = shared_house(deps)                         # cash: R$ 300.000 + R$ 18.000 of costs up front
-    view = update_shares(deps, OTHER, hid, {"shares": [{"member_id": OWNER_MEMBER_ID, "cents": 20_000_000},
-                                                       {"member_id": partner, "cents": 10_000_000}]})
+def bought_together(**extra):
+    """Cash, R$ 300.000 + R$ 18.000 of costs paid at the purchase: R$ 218.000 by the owner, R$ 100.000 by OTHER."""
+    return house_input(owner_share_cents=21_800_000, partners=[{"phone": "21922222222", "cents": 10_000_000}], **extra)
+
+
+def test_the_purchase_is_split_when_the_house_is_registered(deps):
+    view = create_house(deps, OWNER, bought_together(), OWNER_PHONE)
+    hid = view["house"]["id"]
+    (invite,) = view["house"]["invites"]
+    assert invite["phone"] == OTHER_PHONE
+    assert [(m["phone"], m["role"]) for m in view["members"]] == [(OWNER_PHONE, "owner"), (OTHER_PHONE, "invited")]
     rows = {r["member_id"]: r["purchase_cents"] for r in view["totals"]["by_member"]}
-    assert rows == {OWNER_MEMBER_ID: 20_000_000, partner: 10_000_000}
-    assert view["totals"]["purchase_unassigned_cents"] == 1_800_000                   # the costs: not split yet
-    for shares, message in (([{"member_id": "abcdef12", "cents": 1}], "sócios"),
-                            ([{"member_id": partner, "cents": 1}, {"member_id": partner, "cents": 2}], "cada um uma vez"),
-                            ([{"member_id": partner, "cents": -1}], "centavos"), ("50/50", "quanto cada sócio")):
-        with pytest.raises(ValidationError, match=message):
-            update_shares(deps, OWNER, hid, {"shares": shares})
+    assert rows == {OWNER_MEMBER_ID: 21_800_000, invite["id"]: 10_000_000}       # theirs, even before accepting
+    assert view["totals"]["purchase_unassigned_cents"] == 0
+    (pending,) = list_invites(deps, OTHER, OTHER_PHONE)
+    accept_invite(deps, OTHER, pending["id"], OTHER_PHONE)
+    view = get_house(deps, OTHER, hid)
+    assert view["me"] == invite["id"]                                   # the partner keeps the invite's id...
+    rows = {r["member_id"]: r["purchase_cents"] for r in view["totals"]["by_member"]}
+    assert rows[view["me"]] == 10_000_000                               # ...so their share is still theirs
+    assert [m["role"] for m in view["members"]] == ["owner", "partner"]
+
+
+def test_bought_with_partners_in_installments_splits_the_entrada(deps):
+    view = create_house(deps, OWNER, house_input(
+        payment_type="installments", down_payment_cents=6_000_000, installments=plan_input(count=2),
+        owner_share_cents=3_900_000, partners=[{"phone": "21922222222", "cents": 3_900_000}]), OWNER_PHONE)
+    assert sum(r["purchase_cents"] for r in view["totals"]["by_member"]) == 7_800_000    # entrada + costs
+    assert len(view["installments"]) == 2
+
+
+@pytest.mark.parametrize("extra, message", [
+    ({"owner_share_cents": 0}, "precisa fechar"),                                # 100.000 of 318.000
+    ({"partners": [{"phone": "21922222222", "cents": 10_000_000}] * 2}, "duas vezes"),
+    ({"partners": [{"phone": "11911111111", "cents": 10_000_000}]}, "duas vezes"),   # the owner's own phone
+    ({"partners": [{"phone": "219", "cents": 10_000_000}]}, "celular"),
+    ({"partners": [{"phone": "21922222222", "cents": -1}]}, "quanto cada um"),
+    ({"partners": "21922222222"}, "sócios"),
+])
+def test_an_invalid_split_saves_nothing(deps, extra, message):
+    with pytest.raises(ValidationError, match=message):
+        create_house(deps, OWNER, {**bought_together(), **extra}, OWNER_PHONE)
+    assert list_houses(deps, OWNER) == [] and list_invites(deps, OTHER, OTHER_PHONE) == []
+
+
+def test_an_invite_with_a_share_can_not_be_cancelled(deps):
+    view = create_house(deps, OWNER, bought_together(), OWNER_PHONE)
+    with pytest.raises(ValidationError, match="não pode ser cancelado"):
+        delete_invite(deps, OWNER, view["house"]["id"], view["house"]["invites"][0]["id"])
+
+
+def test_a_payment_can_be_registered_for_someone_invited(deps):
+    view = create_house(deps, OWNER, bought_together(), OWNER_PHONE)
+    invited = view["house"]["invites"][0]["id"]
+    view = create_expense(deps, OWNER, view["house"]["id"], expense_input(amount_cents=500, paid_by=invited))
+    assert {r["member_id"]: r["renovation_cents"] for r in view["totals"]["by_member"]}[invited] == 500
 
 
 def test_a_partner_with_payments_is_not_removed(deps):

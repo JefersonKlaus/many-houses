@@ -172,27 +172,50 @@ class Invite:
 @dataclass(frozen=True)
 class Share:
     """How much of the purchase (what was paid up front: the price when cash, the entrada when in
-    installments, plus the purchase costs) one member paid."""
+    installments, plus the purchase costs) one member paid. Only set when the house is registered."""
     member_id: str
     cents: int
 
 
-def shares_from_input(payload: Mapping[str, Any], member_ids: list[str]) -> tuple[Share, ...]:
-    """`shares`: [{"member_id", "cents"}], each member at most once; the ones with 0 are dropped."""
-    shares = payload.get("shares")
-    if not isinstance(shares, list):
-        raise ValidationError("divisão da compra: informe quanto cada sócio pagou")
-    result, seen = [], set()
-    for item in shares:
-        if not isinstance(item, Mapping) or item.get("member_id") not in member_ids or item["member_id"] in seen:
-            raise ValidationError("divisão da compra: escolha os sócios da casa, cada um uma vez")
-        seen.add(item["member_id"])
-        cents = item.get("cents")
-        if isinstance(cents, bool) or not isinstance(cents, int) or not 0 <= cents <= MAX_AMOUNT_CENTS:
-            raise ValidationError("divisão da compra: informe um valor em centavos para cada sócio")
+def brl(cents: int) -> str:
+    """123456 -> "R$ 1.234,56", for the messages."""
+    whole, rest = divmod(abs(cents), 100)
+    return f"{'-' if cents < 0 else ''}R$ {whole:,}".replace(",", ".") + f",{rest:02d}"
+
+
+def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_phone: str,
+                         today: str) -> tuple[tuple[Invite, ...], tuple[Share, ...]]:
+    """When a house is registered as bought with partners: `partners` [{phone, cents}] and the owner's own
+    `owner_share_cents`, how much each one paid at the purchase. Each partner gets an invite; the shares
+    must add up to what was paid at the purchase (the split is only set here, in the act of buying)."""
+    partners = payload.get("partners") or []
+    if not isinstance(partners, list) or len(partners) > MAX_PARTNERS:
+        raise ValidationError(f"sócios: no máximo {MAX_PARTNERS}")
+    if not partners:
+        return (), ()
+    def amount(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_AMOUNT_CENTS:
+            raise ValidationError("divisão da compra: informe quanto cada um pagou")
+        return value
+    owner_share = amount(payload.get("owner_share_cents", 0))
+    invites, shares, seen = [], [Share(OWNER_MEMBER_ID, owner_share)] if owner_share else [], {owner_phone}
+    for partner in partners:
+        if not isinstance(partner, Mapping):
+            raise ValidationError("sócios: informe o celular e quanto cada um pagou")
+        phone = phone_number(partner.get("phone"))
+        if phone in seen:
+            raise ValidationError("sócios: o mesmo celular aparece duas vezes (ou é o seu)")
+        seen.add(phone)
+        invite = Invite(new_id(), phone, today)
+        invites.append(invite)
+        cents = amount(partner.get("cents"))
         if cents:
-            result.append(Share(item["member_id"], cents))
-    return tuple(result)
+            shares.append(Share(invite.id, cents))
+    total = sum(s.cents for s in shares)
+    if total != upfront_cents:
+        raise ValidationError(f"divisão da compra: a soma ({brl(total)}) precisa fechar com o que foi pago "
+                              f"na compra ({brl(upfront_cents)})")
+    return tuple(invites), tuple(shares)
 
 
 @dataclass(frozen=True)
@@ -235,7 +258,7 @@ class House:
     owner_phone: str = ""
     partners: tuple[Partner, ...] = ()
     invites: tuple[Invite, ...] = ()
-    purchase_shares: tuple[Share, ...] = ()     # empty: the owner paid the whole purchase
+    purchase_shares: tuple[Share, ...] = ()     # set at registration; empty: the owner paid the whole purchase
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None,
@@ -263,7 +286,10 @@ class House:
 
     @property
     def member_ids(self) -> list[str]:
-        return [OWNER_MEMBER_ID] + [p.id for p in self.partners]
+        """The owner, the partners and whoever was invited and didn't answer yet: an invited partner keeps
+        the invite's id when accepting, so what was registered for them (their share of the purchase,
+        what they paid) stays theirs."""
+        return [OWNER_MEMBER_ID] + [p.id for p in self.partners] + [i.id for i in self.invites]
 
     @property
     def purchase_total_cents(self) -> int:

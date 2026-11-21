@@ -124,9 +124,11 @@ def sorted_installments(installments: Iterable[Installment]) -> list[Installment
 
 
 def members(house: House) -> list[dict[str, Any]]:
-    """The owner first, then the partners: how the screens list and name them."""
+    """The owner first, then the partners, then the ones invited who didn't answer yet ("invited"):
+    how the screens list and name them."""
     return ([{"id": OWNER_MEMBER_ID, "phone": house.owner_phone, "role": "owner"}]
-            + [{"id": p.id, "phone": p.phone, "role": "partner"} for p in house.partners])
+            + [{"id": p.id, "phone": p.phone, "role": "partner"} for p in house.partners]
+            + [{"id": i.id, "phone": i.phone, "role": "invited"} for i in house.invites])
 
 
 def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Installment] = ()) -> dict[str, Any]:
@@ -158,7 +160,7 @@ def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Ins
 def by_member(house: House, expenses: list[Expense], installments: list[Installment]) -> dict[str, Any]:
     """How much each member actually put into the house so far: their share of the purchase (what was
     paid up front), the installments they paid and the renovation costs they paid. A record with no
-    `paid_by` (or of a partner no longer in the house) counts for the owner. `purchase_unassigned_cents`:
+    `paid_by` (or of someone no longer in the house: a declined invite) counts for the owner. `purchase_unassigned_cents`:
     what was paid up front that the shares don't cover yet (negative: the shares add up to more)."""
     ids = house.member_ids
     rows = {m: {"member_id": m, "purchase_cents": 0, "installments_cents": 0, "renovation_cents": 0} for m in ids}

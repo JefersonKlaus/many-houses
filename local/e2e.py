@@ -211,7 +211,7 @@ def run():
         # a partner: invited by phone, accepts on their own login and pays a cost; the owner sees who put in what
         page.locator(".list-item", has_text="Casa Azul").click()
         page.click("#tab-partners")
-        expect(page.locator("#partners")).to_contain_text("Comprou esta casa com sócios?")
+        expect(page.locator("#partners")).to_contain_text("Nenhum sócio")
         page.fill("#p-phone", "21922222222")
         page.click("#partners button[type=submit]")
         expect(page.locator("#partners .members")).to_contain_text("(21) 92222-2222")
@@ -244,19 +244,42 @@ def run():
         expect(rows.nth(0)).to_contain_text("161.000,00")      # entrada + costs 78.000, installment 80.000, cost 3.000
         expect(rows.nth(1)).to_contain_text("(21) 92222-2222")
         expect(rows.nth(1)).to_contain_text("2.000,00")
-        page.click("text=Dividir a compra")                     # the purchase (78.000) was paid half each
-        page.locator("dialog input").nth(0).fill("39.000")
-        page.locator("dialog input").nth(1).fill("39.000")
-        expect(page.locator("#s-sum")).to_contain_text("fecha")
-        page.click("dialog >> text=Salvar")
-        expect(rows.nth(1)).to_contain_text("41.000,00")       # 39.000 + 2.000
-        expect(rows.nth(0)).to_contain_text("122.000,00")
+        expect(page.locator("text=Dividir a compra")).to_have_count(0)  # the purchase is only split when registering
 
         # deleting the house: it is gone for the partner too
         page.click("button.danger:has-text('Excluir')")
         expect(page.locator(".empty-state")).to_be_visible()
         partner.click("text=‹ Casas")
         expect(partner.locator(".empty-state")).to_be_visible()
+
+        # a house bought with a partner: the split is set when registering it, and the partner is invited
+        page.locator(".empty-state button", has_text="Nova casa").click()
+        page.fill("#h-name", "Casa Verde")
+        page.fill("#h-address", "Rua B, 2")
+        page.fill("#h-price", "200.000")
+        page.fill("#h-costs", "10.000")
+        expect(page.locator("#h-owner-share")).to_be_hidden()                          # "Só eu" by default
+        page.locator("label.choice", has_text="Com sócios").click()
+        page.fill("#h-owner-share", "100.000")
+        page.locator("#h-partners .p-phone").fill("21922222222")
+        page.locator("#h-partners .p-cents").fill("100.000")
+        expect(page.locator("#h-split")).to_contain_text("faltam R$ 10.000,00")
+        page.click("dialog >> text=Salvar")
+        expect(page.locator(".toast.error").last).to_contain_text("precisa fechar")    # the split must add up
+        errors[:] = [e for e in errors if "status of 400" not in e]                  # that 400 was on purpose
+        page.fill("#h-owner-share", "110.000")
+        expect(page.locator("#h-split")).to_contain_text("a divisão fecha")
+        page.click("dialog >> text=Salvar")
+        expect(page.locator("h1")).to_contain_text("Casa Verde")
+        page.click("#tab-partners")
+        expect(page.locator("#partners .members")).to_contain_text("aguardando")
+        expect(page.locator("#by-member tbody tr").nth(1)).to_contain_text("100.000,00")   # theirs before accepting
+        partner.reload()
+        partner.click(".card.invite >> text=Aceitar")
+        expect(partner.locator("h1")).to_contain_text("Casa Verde")
+        partner.click("#tab-partners")
+        expect(partner.locator("#by-member tbody tr").nth(1)).to_contain_text("Você")
+        expect(partner.locator("#by-member tbody tr").nth(1)).to_contain_text("100.000,00")
         browser.close()
     server.shutdown()
     assert not errors, errors
@@ -273,7 +296,12 @@ def run_without_login():
         watch(page, errors)
         page.goto(url_of(server))
         expect(page.locator("#local-mode")).to_have_count(1)
+        expect(page.locator(".list-item")).to_have_count(3)                            # the sold one is hidden
+        expect(page.locator("#toggle-sold")).to_have_text("Mostrar vendidas (1)")
+        page.click("#toggle-sold")
         expect(page.locator(".list-item")).to_have_count(4)
+        page.click("#toggle-sold")
+        expect(page.locator(".list-item")).to_have_count(3)
         page.locator(".list-item", has_text="Sobrado Vila Nova").click()
         expect(page.locator(".bars").last.locator("li")).to_have_count(4)               # categories
         expect(page.locator("#areas li")).to_have_count(3)                              # Telhado, Hidráulica, Sem área
@@ -292,6 +320,7 @@ def run_without_login():
 
         # every list pages at 10: the 12 costs of a house in two pages
         page.click("text=‹ Casas")
+        page.click("#toggle-sold")                                                     # it is a sold house
         page.locator(".list-item", has_text="Casa da Rua das Flores").click()
         page.click("#tab-renovation")
         expect(page.locator("#expenses tbody tr")).to_have_count(10)
@@ -307,7 +336,7 @@ def run_without_login():
         expect(page.locator("text=Você é sócio. Dono")).to_be_visible()
         page.click("text=‹ Casas")
         expect(page.locator(".card.invite")).to_have_count(0)
-        expect(page.locator(".list-item")).to_have_count(5)
+        expect(page.locator(".list-item")).to_have_count(5)                            # sold ones still shown
         browser.close()
     server.shutdown()
     assert not errors, errors

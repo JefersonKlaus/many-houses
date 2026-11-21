@@ -30,10 +30,14 @@ const badge = (status) => h("span", { className: `badge status-${status}` }, STA
 
 export async function mount(container) {
   // ------------------------------------------------------------------ every house
+  let showSold = false;        // sold houses are hidden from the list (and its totals) unless asked for
+
   async function list() {
-    let houses, invites;
-    try { [houses, invites] = await Promise.all([api("GET", "/houses"), api("GET", "/invites")]); }
+    let all, invites;
+    try { [all, invites] = await Promise.all([api("GET", "/houses"), api("GET", "/invites")]); }
     catch (error) { return render(container, h("p", { className: "notice" }, error.message)); }
+    const sold = all.filter((x) => x.status === "sold").length;
+    const houses = showSold ? all : all.filter((x) => x.status !== "sold");
     const sum = (key) => houses.reduce((total, x) => total + x.totals[key], 0);
     const row = (x) => h("li", { className: "list-item clickable", tabindex: 0, role: "button",
       onclick: () => detail(x.id), onkeydown: (e) => { if (e.key === "Enter") detail(x.id); } },
@@ -53,10 +57,13 @@ export async function mount(container) {
       houses.length > 0 && h("div", { className: "totals", id: "portfolio" },
         tile("Compras", formatMoney(sum("purchase_cents"))), tile("Reformas", formatMoney(sum("renovation_cents"))),
         tile("Total investido", formatMoney(sum("total_cents")))),
-      houses.length === 0 ? h("div", { className: "card empty-state" }, h("h2", {}, "Nenhuma casa ainda"),
+      all.length === 0 ? h("div", { className: "card empty-state" }, h("h2", {}, "Nenhuma casa ainda"),
         h("p", { className: "muted" }, "Cadastre a primeira casa comprada e acompanhe os custos da reforma."),
         h("button", { className: "primary", onclick: () => houseDialog(null, show) }, "Nova casa"))
-        : pagedList(houses, row, { label: "casas (nome ou endereço)", searchText: (x) => `${x.name} ${x.address}` }));
+        : houses.length === 0 ? h("p", { className: "notice" }, "Nenhuma casa à venda ou em reforma.")
+          : pagedList(houses, row, { label: "casas (nome ou endereço)", searchText: (x) => `${x.name} ${x.address}` }),
+      sold > 0 && h("div", { className: "actions" }, h("button", { className: "link", id: "toggle-sold",
+        onclick: () => { showSold = !showSold; list(); } }, showSold ? "Ocultar vendidas" : `Mostrar vendidas (${sold})`)));
   }
 
   /** "(11) 98888-7777 convidou você para ser sócio da casa X": accept (it opens) or decline. */
@@ -352,18 +359,11 @@ export async function mount(container) {
             ["total_cents", null]].map(([k, label]) =>
             h("td", { className: "num", "data-label": label }, formatMoney(totals.by_member.reduce((sum, r) => sum + r[k], 0)))),
           h("td", {}))))));
-      const unassigned = totals.purchase_unassigned_cents;
-      if (unassigned !== 0) card.append(h("p", { className: "notice-warn" }, unassigned > 0
-          ? `${formatMoney(unassigned)} da compra ainda não foi dividido entre os sócios.`
-          : `A divisão da compra passa ${formatMoney(-unassigned)} do que foi pago na compra.`));
-      card.append(
-        h("div", { className: "actions" },
-          h("button", { className: "secondary small", onclick: () => sharesDialog(view) }, "Dividir a compra")),
-        h("p", { className: "muted hint" }, "Compra: o que cada um pagou na compra (entrada ou valor à vista, mais os custos). "
-          + "Prestações e reforma: o que cada um pagou, conforme o “pago por” de cada lançamento."));
+      card.append(h("p", { className: "muted hint" }, "Compra: o que cada um pagou no ato da compra, definido no cadastro "
+        + "da casa. Prestações e reforma: o que cada um pagou, conforme o “pago por” de cada lançamento."));
     } else {
       card.append(h("p", { className: "muted" }, owner
-        ? "Comprou esta casa com sócios? Convide cada um pelo celular: o convite aparece para ele aceitar quando entrar no sistema."
+        ? "Nenhum sócio. Quem entrar como sócio depois da compra não tem parte nela: o que ele pagar entra pelas prestações e pela reforma."
         : "Nenhum sócio."));
     }
 
@@ -377,14 +377,14 @@ export async function mount(container) {
       try { show(await api("DELETE", `/houses/${house.id}/invites/${invite.id}`)); notify("Convite cancelado."); }
       catch (error) { notify(error.message, true); }
     };
+    const roleText = (m) => m.role === "owner" ? " · dono" : m.role === "partner" ? " · sócio"
+      : ` · convidado em ${formatDate(house.invites.find((i) => i.id === m.id)?.date || "")}, aguardando`;
     card.append(h("ul", { className: "members" },
-      ctx.shared && view.members.map((m) => h("li", {},
+      ctx.shared && view.members.map((m) => h("li", { className: m.role === "invited" ? "pending" : null },
         h("span", {}, memberName(m.id), m.id === ctx.me && m.phone && h("small", { className: "muted" }, ` ${formatPhone(m.phone)}`),
-          h("small", { className: "muted" }, m.role === "owner" ? " · dono" : " · sócio")),
-        owner && m.role === "partner" && h("button", { className: "link danger-link", onclick: () => removePartner(m) }, "Remover"))),
-      house.invites.map((invite) => h("li", { className: "pending" },
-        h("span", {}, formatPhone(invite.phone), h("small", { className: "muted" }, ` · convidado em ${formatDate(invite.date)}, aguardando`)),
-        owner && h("button", { className: "link danger-link", onclick: () => cancelInvite(invite) }, "Cancelar convite")))));
+          h("small", { className: "muted" }, roleText(m))),
+        owner && m.role === "partner" && h("button", { className: "link danger-link", onclick: () => removePartner(m) }, "Remover"),
+        owner && m.role === "invited" && h("button", { className: "link danger-link", onclick: () => cancelInvite(m) }, "Cancelar convite")))));
 
     if (owner) {
       const phone = h("input", { id: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "11987654321",
@@ -405,41 +405,6 @@ export async function mount(container) {
       card.append(form);
     }
     return card;
-  }
-
-  /** How much of the purchase each member paid: what was paid up front (entrada or cash price, plus costs). */
-  function sharesDialog(view) {
-    const { house, totals } = view;
-    const upfront = (house.payment_type === "installments" ? house.down_payment_cents : house.purchase_price_cents)
-      + house.purchase_costs_cents;
-    const current = Object.fromEntries(totals.by_member.map((r) => [r.member_id, r.purchase_cents]));
-    const inputs = view.members.map((m) => [m.id, h("input", { id: `s-${m.id}`, inputMode: "decimal", placeholder: "0,00",
-      value: current[m.id] ? centsToText(current[m.id]) : "" })]);
-    const sum = h("p", { className: "muted hint", id: "s-sum" });
-    const update = () => {
-      const values = inputs.map(([, input]) => toCents(input.value || "0"));
-      const total = values.every((v) => v !== null) ? values.reduce((a, b) => a + b, 0) : null;
-      sum.textContent = total === null ? "" : total === upfront ? "A divisão fecha com o total da compra."
-        : `Somando ${formatMoney(total)}: ${total < upfront ? "faltam" : "passam"} ${formatMoney(Math.abs(upfront - total))}.`;
-    };
-    inputs.forEach(([, input]) => input.addEventListener("input", update));
-    update();
-    const save = h("button", { className: "primary" }, "Salvar");
-    const dialog = openDialog("Quem pagou a compra",
-      h("p", { className: "muted" }, `Pago na compra: ${formatMoney(upfront)} `
-        + `(${house.payment_type === "installments" ? "entrada" : "valor à vista"} + custos da compra).`),
-      inputs.map(([id, input]) => field(input.id, memberName(id), input)),
-      sum,
-      h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
-    save.addEventListener("click", () => whileDisabled(save, async () => {
-      try {
-        const shares = inputs.map(([id, input]) => ({ member_id: id, cents: cents(input, memberName(id), false) }));
-        show(await api("PUT", `/houses/${house.id}/shares`, { shares }));
-        notify("Divisão da compra salva.");
-        dialog.close();
-      } catch (error) { notify(error.message, true); }
-    }));
-    inputs[0][1].focus();
   }
 
   /** "Pago por": a select of the house's members (only when it has partners), the user first by default. */
@@ -529,6 +494,51 @@ export async function mount(container) {
     date.addEventListener("change", followPurchase);
     followPurchase();
 
+    // who bought it: only me, or with partners and how much each one paid at the purchase (only when registering:
+    // the split is set here, in the act of buying, and can't be changed later)
+    const buyersType = (value, text) => h("label", { className: "choice" },
+      h("input", { type: "radio", name: "h-buyers", value, checked: value === "me", onchange: toggleBuyers }), text);
+    const ownerShare = h("input", { id: "h-owner-share", inputMode: "decimal", placeholder: "0,00" });
+    const partnerRows = h("div", { id: "h-partners" });
+    const split = h("p", { className: "muted hint", id: "h-split" });
+    const addPartner = () => {
+      const row = h("div", { className: "partner-row" },
+        h("input", { className: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "Celular: 11987654321",
+          "aria-label": "Celular do sócio (DDD + número)" }),
+        h("input", { className: "p-cents", inputMode: "decimal", placeholder: "Pagou (R$)", "aria-label": "Quanto o sócio pagou (R$)" }),
+        h("button", { type: "button", className: "link danger-link", "aria-label": "Tirar este sócio",
+          onclick: () => { row.remove(); updateSplit(); } }, "✕"));
+      row.querySelector(".p-cents").addEventListener("input", updateSplit);
+      partnerRows.append(row);
+      row.querySelector(".p-phone").focus();
+    };
+    const buyers = h("div", { className: "installments-fields buyers-fields" },
+      field("h-owner-share", "Sua parte na compra (R$)", ownerShare),
+      h("label", {}, "Sócios: celular e quanto cada um pagou na compra"), partnerRows,
+      h("button", { type: "button", className: "secondary small", onclick: addPartner }, "+ Sócio"),
+      split,
+      h("p", { className: "muted hint" }, "Cada sócio recebe um convite no celular. A divisão da compra é definida só aqui, no cadastro."));
+    const upfront = () => {          // what was paid at the purchase: the cash price or the entrada, plus the costs
+      const paid = toCents((chosen() === "installments" ? down.value : price.value) || "0");
+      const c = toCents(costs.value || "0");
+      return paid === null || c === null ? null : paid + c;
+    };
+    function updateSplit() {         // "Pago na compra R$ 318.000,00 · divisão: faltam R$ 18.000,00"
+      const total = upfront();
+      const parts = [ownerShare, ...partnerRows.querySelectorAll(".p-cents")].map((i) => toCents(i.value || "0"));
+      if (total === null || parts.some((v) => v === null)) { split.textContent = ""; return; }
+      const sum = parts.reduce((a, b) => a + b, 0);
+      split.textContent = `Pago na compra: ${formatMoney(total)} · `
+        + (sum === total ? "a divisão fecha." : `${sum < total ? "faltam" : "passam"} ${formatMoney(Math.abs(total - sum))}.`);
+    }
+    function toggleBuyers() {
+      const together = dialog.querySelector("input[name=h-buyers]:checked").value === "partners";
+      buyers.hidden = !together;
+      if (together && !partnerRows.children.length) addPartner();
+      updateSplit();
+    }
+    if (!house) for (const input of [ownerShare, price, costs, down]) input.addEventListener("input", updateSplit);
+
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(house ? `Editar ${house.name}` : "Nova casa",
       field("h-name", "Nome", name), field("h-address", "Endereço", address),
@@ -540,12 +550,15 @@ export async function mount(container) {
       h("fieldset", { className: "choices" }, h("legend", {}, "Forma de pagamento"),
         radio("cash", "À vista"), radio("installments", "Parcelado")),
       installments,
+      !house && [h("fieldset", { className: "choices" }, h("legend", {}, "Quem comprou"),
+        buyersType("me", "Só eu"), buyersType("partners", "Com sócios")), buyers],
       areas,
       field("h-profit", "Lucro desejado (%)", profit),
       h("p", { className: "muted hint" }, "Sobre o total investido (compra + reforma): a página da casa mostra por quanto vender hoje."),
       field("h-notes", "Observações", notes),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     toggle();
+    if (!house) { buyers.hidden = true; for (const r of dialog.querySelectorAll("input[name=h-payment]")) r.addEventListener("change", updateSplit); }
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
         const target = toPercent(profit.value);
@@ -562,6 +575,12 @@ export async function mount(container) {
             body.installments = { count: Number(count.value), amount_cents: cents(amount, "Valor de cada parcela"),
               first_due_date: first.value };
           }
+        }
+        if (!house && dialog.querySelector("input[name=h-buyers]:checked").value === "partners") {
+          body.owner_share_cents = cents(ownerShare, "Sua parte na compra", false);
+          body.partners = [...partnerRows.children].map((row) => ({ phone: row.querySelector(".p-phone").value.trim(),
+            cents: cents(row.querySelector(".p-cents"), "Quanto o sócio pagou", false) }));
+          if (body.partners.length === 0) throw new Error("Sócios: adicione ao menos um, ou marque “Só eu”");
         }
         const view = house ? await api("PUT", `/houses/${house.id}`, body) : await api("POST", "/houses", body);
         notify("Casa salva.");
