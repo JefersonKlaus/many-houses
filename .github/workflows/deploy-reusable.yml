@@ -19,7 +19,7 @@ permissions:
 jobs:
   deploy:
     name: Deploy (${{ inputs.environment }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned: Playwright has no Chromium for newer Ubuntu yet
     # Secrets and variables come from the Environment, so each environment uses its own AWS account.
     environment: ${{ inputs.github_environment }}
     env:

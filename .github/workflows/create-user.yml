@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   create:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned: Playwright has no Chromium for newer Ubuntu yet
     environment: ${{ inputs.environment }}
     env:
       EMAIL: ${{ inputs.email }} # through a variable: typed text is never pasted into the shell
