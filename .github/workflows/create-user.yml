@@ -1,6 +1,7 @@
 # Creates a login in Cognito, no terminal needed: Actions → Create user → Run workflow.
-# The login is the phone (DDD + number); the e-mail receives the temporary password.
-# Each login has its own houses (the owner is the login's id).
+# The login is the phone (DDD + number); the e-mail receives the temporary password; the name is how
+# partners see each other. If the phone already has a login, only its name is updated (to give a name
+# to the logins created before names existed, or to change one).
 name: Create user
 
 on:
@@ -11,6 +12,10 @@ on:
         required: true
         type: choice
         options: [dev, producao] # names of the GitHub Environments
+      name:
+        description: "User's name (e.g. Ana Lima)"
+        required: true
+        type: string
       phone:
         description: "Phone used to log in: DDD + number, digits only (e.g. 11987654321)"
         required: true
@@ -28,7 +33,8 @@ jobs:
     runs-on: ubuntu-24.04 # pinned: Playwright has no Chromium for newer Ubuntu yet
     environment: ${{ inputs.environment }}
     env:
-      PHONE: ${{ inputs.phone }} # through variables: typed text is never pasted into the shell
+      NAME: ${{ inputs.name }} # through variables: typed text is never pasted into the shell
+      PHONE: ${{ inputs.phone }}
       EMAIL: ${{ inputs.email }}
       ENVIRONMENT: ${{ inputs.environment }}
     steps:
@@ -38,8 +44,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Create the user
+      - name: Create the user (or update their name)
         run: |
+          NAME="$(printf '%s' "$NAME" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')"
+          if [ -z "$NAME" ] || [ "${#NAME}" -gt 80 ]; then
+            echo "::error::Invalid name: type the user's name (up to 80 characters)."
+            exit 1
+          fi
           if ! printf '%s' "$PHONE" | grep -Eq '^[1-9]{2}[0-9]{8,9}$'; then
             echo "::error::Invalid phone: type DDD + number, digits only (10 or 11 digits)."
             exit 1
@@ -56,9 +67,19 @@ jobs:
             echo "::error::Could not find this environment's Cognito user pool. Deploy the environment first."
             exit 1
           fi
+          # Attributes as JSON (built by jq): a name with commas or quotes is passed as it is.
+          NAME_ATTRIBUTE="$(jq -cn --arg v "$NAME" '[{Name: "name", Value: $v}]')"
+          if aws cognito-idp admin-get-user --user-pool-id "$POOL" --username "+55$PHONE" > /dev/null 2>&1; then
+            aws cognito-idp admin-update-user-attributes --user-pool-id "$POOL" --username "+55$PHONE" \
+              --user-attributes "$NAME_ATTRIBUTE"
+            echo "User $PHONE already existed in **$ENVIRONMENT**: their name was updated (it shows after their next login)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           # The username is the phone in international format (+55...); the temporary password goes by e-mail.
+          ATTRIBUTES="$(jq -cn --arg name "$NAME" --arg phone "+55$PHONE" --arg email "$EMAIL" '[
+            {Name: "name", Value: $name},
+            {Name: "phone_number", Value: $phone}, {Name: "phone_number_verified", Value: "true"},
+            {Name: "email", Value: $email}, {Name: "email_verified", Value: "true"}]')"
           aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "+55$PHONE" \
-            --user-attributes Name=phone_number,Value="+55$PHONE" Name=phone_number_verified,Value=true \
-                              Name=email,Value="$EMAIL" Name=email_verified,Value=true \
-            --desired-delivery-mediums EMAIL > /dev/null
+            --user-attributes "$ATTRIBUTES" --desired-delivery-mediums EMAIL > /dev/null
           echo "User $PHONE created in **$ENVIRONMENT**. The temporary password was sent by e-mail." >> "$GITHUB_STEP_SUMMARY"

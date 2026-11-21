@@ -11,10 +11,10 @@ from api_gateway import ROUTES, dispatch
 from memory_repository import MemoryRepository
 
 
-def call(deps, method, path, body=None, query=None, owner="owner-a", base64_=False, phone=None):
+def call(deps, method, path, body=None, query=None, owner="owner-a", base64_=False, phone=None, name=None):
     event = {"rawPath": path, "requestContext": {"http": {"method": method}}, "queryStringParameters": query}
     if owner is not None:
-        claims = {"sub": owner, **({"phone_number": phone} if phone else {})}
+        claims = {"sub": owner, **({"phone_number": phone} if phone else {}), **({"name": name} if name else {})}
         event["requestContext"]["authorizer"] = {"jwt": {"claims": claims}}
     if body is not None:
         text = body if isinstance(body, str) else json.dumps(body)
@@ -94,6 +94,11 @@ def test_partners_over_http(api):
     expense = call(api, "GET", f"/houses/{hid}")[1]["expenses"][0]
     call(api, "PUT", f"/houses/{hid}/expenses/{expense['id']}", {**expense, "paid_by": "00000000"})  # the owner paid it
     assert call(api, "DELETE", f"/houses/{hid}/partners/{partner}")[1]["members"][1:] == []
+
+
+def test_the_name_comes_from_the_token(api):
+    status, view = call(api, "POST", "/houses", {**house_input(), "owner_name": "Hacker"}, name="  Ana   Lima ")
+    assert status == 201 and view["members"][0]["name"] == "Ana Lima"             # never from the body
 
 
 def test_house_bought_with_partners_over_http(api):

@@ -115,7 +115,7 @@ creates the function, the route and the logs. Lambdas marked `"read"` can only r
 
 Rules worth knowing:
 
-- The user comes from the login token (`sub`, and `phone_number` for invites), never from the request:
+- The user comes from the login token (`sub`, `phone_number` for invites and `name`), never from the request:
   each login sees only its houses and the ones it is a partner in.
 - Partners: a house registered as bought with partners says how much each one paid at the purchase
   (what was paid up front: cash price or entrada, plus the costs; the shares must add up to it). That
@@ -185,9 +185,13 @@ table** (every login and all the data): that stops it before anything is applied
 
 ### Create a login
 
-Actions → *Create user* → choose the environment, type the phone (DDD + number, digits only, e.g.
-`11987654321`) and an e-mail. The person logs in with that phone; Cognito e-mails the temporary
-password, which is changed on the first access. There is no open sign-up.
+Actions → *Create user* → choose the environment, type the person's name, the phone (DDD + number,
+digits only, e.g. `11987654321`) and an e-mail. The person logs in with that phone; Cognito e-mails
+the temporary password, which is changed on the first access. The name is how partners see each
+other. There is no open sign-up.
+
+For a phone that already has a login, the same workflow only updates the name (to give a name to a
+login created before names existed, or to change it); it shows after that person's next login.
 
 ## Security and cost
 

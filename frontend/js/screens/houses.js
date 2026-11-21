@@ -83,7 +83,8 @@ export async function mount(container) {
       list();
     });
     return h("div", { className: "card invite", role: "status" },
-      h("p", {}, h("strong", {}, formatPhone(invite.from_phone) || "Alguém"),
+      h("p", {}, h("strong", {}, invite.from_name || formatPhone(invite.from_phone) || "Alguém"),
+        invite.from_name && invite.from_phone && h("span", { className: "muted" }, ` (${formatPhone(invite.from_phone)})`),
         " convidou você para ser sócio da casa ", h("strong", {}, `“${invite.house_name}”`), "."),
       h("p", { className: "muted" }, "Aceitando, a casa aparece na sua lista e vocês lançam juntos os pagamentos."),
       h("div", { className: "actions" }, accept, decline));
@@ -101,11 +102,11 @@ export async function mount(container) {
   /** Draws one house's page from what the API answered (GET /houses/{id} or any change to the house). */
   // The house on screen: who its members are and who the user is among them (see show()).
   let ctx = { members: [], me: "", role: "owner", shared: false };
-  /** A member's name on screen: "Você", or their phone. */
+  /** A partner's name on screen: "Você", their name, or their phone when their login has no name. */
   const memberName = (id) => {
     if (id === ctx.me || (!id && ctx.role === "owner")) return "Você";
     const member = ctx.members.find((m) => m.id === (id || ctx.members[0]?.id));
-    return member ? formatPhone(member.phone) || "Sócio" : "";
+    return member ? member.name || formatPhone(member.phone) || "Sócio" : "";
   };
 
   function show(view) {
@@ -137,7 +138,7 @@ export async function mount(container) {
         house.payment_type === "installments" && ["installments",
           `Prestações (${totals.payment.paid_count}/${totals.payment.installments_count})`,
           () => [installmentsCard(house, installments, totals.payment)]],
-        ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view)]],
+        ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view), investmentCard(view)]],
       ]));
   }
 
@@ -333,18 +334,68 @@ export async function mount(container) {
   }
 
   // ------------------------------------------------------------------ partners
-  /** The Sócios tab: how much each partner put in (purchase, installments, renovation), the partners and
-   *  the invites waiting for an answer. Partners are all equal: any of them invites by phone, cancels an
-   *  invite and removes another partner (except whoever registered the house, where its data is kept). */
+  /** The Sócios tab, in two cards: who the partners are (and the invites waiting), and how much each one
+   *  put in. Partners are all equal: any of them invites by phone, cancels an invite and removes another
+   *  partner (except whoever registered the house, where its data is kept). */
   function partnersCard(view) {
-    const { house, totals } = view;
+    const { house } = view;
     const card = h("div", { className: "card", id: "partners" }, h("h2", {}, "Sócios"));
-    if (ctx.shared) {
-      const invested = totals.by_member.reduce((sum, r) => sum + r.total_cents, 0);
-      card.append(h("div", { className: "table-scroll" }, h("table", { className: "money", id: "by-member" },
+    const removePartner = async (member) => {
+      if (!confirm(`Remover ${memberName(member.id)} dos sócios desta casa?`)) return;
+      try { show(await api("DELETE", `/houses/${house.id}/partners/${member.id}`)); notify("Sócio removido."); }
+      catch (error) { notify(error.message, true); }
+    };
+    const cancelInvite = async (invite) => {
+      try { show(await api("DELETE", `/houses/${house.id}/invites/${invite.id}`)); notify("Convite cancelado."); }
+      catch (error) { notify(error.message, true); }
+    };
+    if (!ctx.shared) {
+      card.append(h("p", { className: "muted" }, "Nenhum sócio. Quem entrar como sócio depois da compra não tem parte "
+        + "nela: o que ele pagar entra pelas prestações e pela reforma."));
+    } else {
+      // one line per partner: the name, the phone below; the ones invited say since when they are waiting
+      card.append(h("ul", { className: "members" }, view.members.map((m) => h("li", { className: m.role === "invited" ? "pending" : null },
+        h("div", {},
+          h("strong", {}, m.id === ctx.me ? `${m.name || "Você"} (você)` : m.name || formatPhone(m.phone)),
+          h("div", { className: "muted" }, [m.name && formatPhone(m.phone), m.role === "invited"
+            && `convidado em ${formatDate(house.invites.find((i) => i.id === m.id)?.date || "")}, aguardando resposta`]
+            .filter(Boolean).join(" · "))),
+        m.role === "partner" && m.id !== ctx.me
+          && h("button", { className: "link danger-link", onclick: () => removePartner(m) }, "Remover"),
+        m.role === "invited" && h("button", { className: "link danger-link", onclick: () => cancelInvite(m) }, "Cancelar convite")))));
+    }
+
+    // the invite form: any partner invites
+    const phone = h("input", { id: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "11987654321",
+      autocomplete: "off" });
+    const send = h("button", { className: "primary small", type: "submit" }, "Convidar");
+    const form = h("form", { className: "invite-form" },
+      h("label", { htmlFor: "p-phone" }, "Convidar sócio (celular: DDD + número)"),
+      h("div", { className: "inline-add" }, phone, send));
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      whileDisabled(send, async () => {
+        try {
+          show(await api("POST", `/houses/${house.id}/invites`, { phone: phone.value.trim() }));
+          notify("Convite enviado. Ele aparece para a pessoa quando ela entrar no sistema.");
+        } catch (error) { notify(error.message, true); }
+      });
+    });
+    card.append(form);
+    return card;
+  }
+
+  /** How much each partner put in so far: their part of the purchase, the installments and the renovation
+   *  costs they paid, and the total. Only for a house with partners. */
+  function investmentCard(view) {
+    const { totals } = view;
+    if (!ctx.shared) return null;
+    const invested = totals.by_member.reduce((sum, r) => sum + r.total_cents, 0);
+    return h("div", { className: "card", id: "investment" }, h("h2", {}, "Quanto cada um investiu"),
+      h("div", { className: "table-scroll" }, h("table", { className: "money", id: "by-member" },
         h("thead", {}, h("tr", {}, ["Sócio", "Compra", "Prestações", "Reforma", "Total", ""].map((c, i) =>
           h("th", { className: i > 0 && i < 5 ? "num" : null }, c)))),
-        // data-label: on a phone each member is a block, the label next to each amount (style.css)
+        // data-label: on a phone each partner is a block, the label next to each amount (style.css)
         h("tbody", {}, totals.by_member.map((r) => h("tr", {},
           h("td", {}, memberName(r.member_id)),
           h("td", { className: "num", "data-label": "Compra" }, formatMoney(r.purchase_cents)),
@@ -356,53 +407,9 @@ export async function mount(container) {
           ...[["purchase_cents", "Compra"], ["installments_cents", "Prestações"], ["renovation_cents", "Reforma"],
             ["total_cents", null]].map(([k, label]) =>
             h("td", { className: "num", "data-label": label }, formatMoney(totals.by_member.reduce((sum, r) => sum + r[k], 0)))),
-          h("td", {}))))));
-      card.append(h("p", { className: "muted hint" }, "Compra: o que cada um pagou no ato da compra, definido no cadastro "
-        + "da casa. Prestações e reforma: o que cada um pagou, conforme o “pago por” de cada lançamento."));
-    } else {
-      card.append(h("p", { className: "muted" },
-        "Nenhum sócio. Quem entrar como sócio depois da compra não tem parte nela: o que ele pagar entra pelas prestações e pela reforma."));
-    }
-
-    // the members and the invites waiting
-    const removePartner = async (member) => {
-      if (!confirm(`Remover ${memberName(member.id)} dos sócios desta casa?`)) return;
-      try { show(await api("DELETE", `/houses/${house.id}/partners/${member.id}`)); notify("Sócio removido."); }
-      catch (error) { notify(error.message, true); }
-    };
-    const cancelInvite = async (invite) => {
-      try { show(await api("DELETE", `/houses/${house.id}/invites/${invite.id}`)); notify("Convite cancelado."); }
-      catch (error) { notify(error.message, true); }
-    };
-    const roleText = (m) => m.role === "invited"
-      ? ` · convidado em ${formatDate(house.invites.find((i) => i.id === m.id)?.date || "")}, aguardando` : "";
-    card.append(h("ul", { className: "members" },
-      ctx.shared && view.members.map((m) => h("li", { className: m.role === "invited" ? "pending" : null },
-        h("span", {}, memberName(m.id), m.id === ctx.me && m.phone && h("small", { className: "muted" }, ` ${formatPhone(m.phone)}`),
-          h("small", { className: "muted" }, roleText(m))),
-        m.role === "partner" && m.id !== ctx.me
-          && h("button", { className: "link danger-link", onclick: () => removePartner(m) }, "Remover"),
-        m.role === "invited" && h("button", { className: "link danger-link", onclick: () => cancelInvite(m) }, "Cancelar convite")))));
-
-    {                                   // the invite form: any partner invites
-      const phone = h("input", { id: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "11987654321",
-        autocomplete: "off" });
-      const send = h("button", { className: "primary small", type: "submit" }, "Convidar");
-      const form = h("form", { className: "invite-form" },
-        h("label", { htmlFor: "p-phone" }, "Convidar sócio (celular: DDD + número)"),
-        h("div", { className: "inline-add" }, phone, send));
-      form.addEventListener("submit", (e) => {
-        e.preventDefault();
-        whileDisabled(send, async () => {
-          try {
-            show(await api("POST", `/houses/${house.id}/invites`, { phone: phone.value.trim() }));
-            notify("Convite enviado. Ele aparece para a pessoa quando ela entrar no sistema.");
-          } catch (error) { notify(error.message, true); }
-        });
-      });
-      card.append(form);
-    }
-    return card;
+          h("td", {}))))),
+      h("p", { className: "muted hint" }, "Compra: o que cada um pagou no ato da compra, definido no cadastro da casa. "
+        + "Prestações e reforma: o que cada um pagou, conforme o “pago por” de cada lançamento."));
   }
 
   /** "Pago por": a select of the house's members (only when it has partners), the user first by default. */

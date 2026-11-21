@@ -5,7 +5,7 @@ from houses_core.adapters.aws import aws_dependencies
 
 from .use_case import create_invite
 
-handle = endpoint(lambda deps, r: create_invite(deps, r.owner, r.id, r.body, r.phone), status=201)
+handle = endpoint(lambda deps, r: create_invite(deps, r.owner, r.id, r.body, r.phone, r.name), status=201)
 
 
 def lambda_handler(event, context):

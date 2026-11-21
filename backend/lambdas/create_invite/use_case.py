@@ -7,16 +7,16 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Mapping
 
-from houses_core.application import Access, house_access, house_view, today
+from houses_core.application import Access, house_access, house_view, today, with_my_name
 from houses_core.domain.errors import ValidationError
 from houses_core.domain.models import MAX_PARTNERS, Invite, PendingInvite, new_id, phone_number
 from houses_core.ports import Dependencies
 
 
 def create_invite(deps: Dependencies, user: str, house_id: str, payload: Mapping[str, Any],
-                  phone: str = "") -> dict[str, Any]:
+                  phone: str = "", name: str = "") -> dict[str, Any]:
     access = house_access(deps.repo, user, house_id)
-    house = access.house
+    house = with_my_name(access, name)
     guest = phone_number(payload.get("phone"))
     if guest == phone:
         raise ValidationError("celular: esse é o seu número")
@@ -32,5 +32,5 @@ def create_invite(deps: Dependencies, user: str, house_id: str, payload: Mapping
     house = replace(house, invites=house.invites + (invite,))
     deps.repo.save_house(access.owner, house)
     deps.repo.save_pending_invite(PendingInvite(invite.id, guest, access.owner, house.id, house.name,
-                                                phone, invite.date))     # from whoever invited
+                                                phone, invite.date, name))     # from whoever invited
     return house_view(deps.repo, Access(access.owner, house, access.member_id))

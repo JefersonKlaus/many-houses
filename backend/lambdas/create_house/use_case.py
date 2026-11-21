@@ -16,8 +16,9 @@ from houses_core.domain.models import OWNER_MEMBER_ID, House, Installment, Pendi
 from houses_core.ports import Dependencies
 
 
-def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phone: str = "") -> dict[str, Any]:
-    house = replace(House.from_input(payload), owner_phone=phone)
+def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phone: str = "",
+                 name: str = "") -> dict[str, Any]:
+    house = replace(House.from_input(payload), owner_phone=phone, owner_name=name)
     invites, shares = bought_with_partners(payload, house.upfront_cents, phone, today())
     house = replace(house, invites=invites, purchase_shares=shares)
     installments = []
@@ -31,5 +32,5 @@ def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phon
     deps.repo.save_installments(user, installments)
     for invite in invites:
         deps.repo.save_pending_invite(PendingInvite(invite.id, invite.phone, user, house.id, house.name, phone,
-                                                    invite.date))
+                                                    invite.date, name))
     return house_view(deps.repo, Access(user, house, OWNER_MEMBER_ID))

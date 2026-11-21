@@ -5,7 +5,7 @@ from houses_core.adapters.aws import aws_dependencies
 
 from .use_case import update_house
 
-handle = endpoint(lambda deps, r: update_house(deps, r.owner, r.id, r.body, r.phone))
+handle = endpoint(lambda deps, r: update_house(deps, r.owner, r.id, r.body, r.phone, r.name))
 
 
 def lambda_handler(event, context):

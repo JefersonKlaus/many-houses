@@ -5,7 +5,7 @@ from houses_core.adapters.aws import aws_dependencies
 
 from .use_case import accept_invite
 
-handle = endpoint(lambda deps, r: accept_invite(deps, r.owner, r.id, r.phone))
+handle = endpoint(lambda deps, r: accept_invite(deps, r.owner, r.id, r.phone, r.name))
 
 
 def lambda_handler(event, context):

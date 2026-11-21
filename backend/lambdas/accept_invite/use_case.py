@@ -11,7 +11,7 @@ from houses_core.domain.models import Partner
 from houses_core.ports import Dependencies
 
 
-def accept_invite(deps: Dependencies, user: str, id: str, phone: str) -> dict[str, Any]:
+def accept_invite(deps: Dependencies, user: str, id: str, phone: str, name: str = "") -> dict[str, Any]:
     pending = deps.repo.get_pending_invite(phone, id) if phone else None
     if pending is None:
         raise NotFound("convite não encontrado")
@@ -23,7 +23,7 @@ def accept_invite(deps: Dependencies, user: str, id: str, phone: str) -> dict[st
         raise NotFound("esse convite não existe mais")
     partners = house.partners
     if not any(p.user == user for p in partners):
-        partners = partners + (Partner(id, user, phone),)     # the invite's id: their share stays theirs
+        partners = partners + (Partner(id, user, phone, name),)     # the invite's id: their share stays theirs
     house = replace(house, partners=partners, invites=tuple(i for i in house.invites if i.id != id))
     deps.repo.save_house(pending.owner, house)
     deps.repo.save_link(user, pending.owner, house.id)

@@ -43,7 +43,7 @@ def test_invite_accept_and_the_partner_sees_the_house(deps):
     assert list_invites(deps, OTHER, OTHER_PHONE) == []
     (listed,) = list_houses(deps, OTHER)
     assert listed["id"] == hid and listed["role"] == "partner" and listed["partners"] == [
-        {"id": listed["partners"][0]["id"], "phone": OTHER_PHONE}]                  # the login (`user`) is not shown
+        {"id": listed["partners"][0]["id"], "name": "", "phone": OTHER_PHONE}]                  # the login (`user`) is not shown
     view = get_house(deps, OTHER, hid)
     assert view["role"] == "partner" and view["me"] != OWNER_MEMBER_ID
     assert [(m["phone"], m["role"]) for m in view["members"]] == [(OWNER_PHONE, "owner"), (OTHER_PHONE, "partner")]
@@ -247,3 +247,18 @@ def test_deleting_a_shared_house_leaves_nothing_behind(deps):
 def test_a_house_registered_before_phones_gets_the_owners(deps):
     hid = create_house(deps, OWNER, house_input())["house"]["id"]                      # no phone then
     assert update_house(deps, OWNER, hid, house_input(), OWNER_PHONE)["house"]["owner_phone"] == OWNER_PHONE
+
+
+def test_partners_are_shown_by_name(deps):
+    """The name comes from each login (Cognito's `name`): kept for whoever registered the house, each
+    partner and whoever sends an invite, and updated when it changes."""
+    hid = create_house(deps, OWNER, house_input(), OWNER_PHONE, "Ana Lima")["house"]["id"]
+    create_invite(deps, OWNER, hid, {"phone": "21922222222"}, OWNER_PHONE, "Ana Lima")
+    (invite,) = list_invites(deps, OTHER, OTHER_PHONE)
+    assert invite["from_name"] == "Ana Lima"
+    accept_invite(deps, OTHER, invite["id"], OTHER_PHONE, "Bruno Reis")
+    view = get_house(deps, OWNER, hid)
+    assert [(m["name"], m["role"]) for m in view["members"]] == [("Ana Lima", "owner"), ("Bruno Reis", "partner")]
+    view = update_house(deps, OTHER, hid, house_input(), OTHER_PHONE, "Bruno Reis Souza")     # renamed login
+    assert view["members"][1]["name"] == "Bruno Reis Souza" and view["members"][0]["name"] == "Ana Lima"
+    assert list_houses(deps, OTHER)[0]["partners"][0]["name"] == "Bruno Reis Souza"

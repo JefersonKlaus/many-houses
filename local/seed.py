@@ -91,13 +91,13 @@ PLANS = {  # house name: entrada, number of monthly installments, each one's amo
 }
 
 
-PARTNER_USER, PARTNER_PHONE = "demo-partner", "+5511988887777"
+PARTNER_USER, PARTNER_PHONE, PARTNER_NAME = "demo-partner", "+5511988887777", "Marcos Pereira"
 PARTNER_ID = "5a5a5a5a"
 SHARED = "Sobrado Vila Nova"
 PAID_BY_PARTNER = {"Retirada do telhado antigo", "Madeiramento e telhas", "Montagem do telhado novo"}
 
 
-def seed(deps: Dependencies, owner: str, today: date, phone: str = "") -> None:
+def seed(deps: Dependencies, owner: str, today: date, phone: str = "", user_name: str = "") -> None:
     for name, address, days_ago, price, costs, status, notes, expenses in HOUSES:
         bought = (today - timedelta(days=days_ago)).isoformat()
         down_payment, count, amount = PLANS.get(name, (0, 0, 0))
@@ -110,10 +110,10 @@ def seed(deps: Dependencies, owner: str, today: date, phone: str = "") -> None:
         shared = name == SHARED
         if shared:      # bought with a partner: the entrada + costs (R$ 187.200) split in half
             half = house.upfront_cents // 2
-            house = replace(house, partners=(Partner(PARTNER_ID, PARTNER_USER, PARTNER_PHONE),),
+            house = replace(house, partners=(Partner(PARTNER_ID, PARTNER_USER, PARTNER_PHONE, PARTNER_NAME),),
                             purchase_shares=(Share(OWNER_MEMBER_ID, house.upfront_cents - half), Share(PARTNER_ID, half)))
             deps.repo.save_link(PARTNER_USER, owner, house.id)
-        deps.repo.save_house(owner, house)
+        deps.repo.save_house(owner, replace(house, owner_name=user_name))
         first_due = add_months(bought, 1)
         dues = [add_months(first_due, n) for n in range(count)]
         installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "",
@@ -135,7 +135,7 @@ def invite_waiting(deps: Dependencies, today: date, phone: str) -> None:
     invite = Invite(new_id(), phone, today.isoformat())
     house = House(new_id(), "Casa Vila Rica", "Rua Ipê, 45 - Vila Rica, Campinas/SP",
                   (today - timedelta(days=20)).isoformat(), 410_000 * R, 24_600 * R, "renovating", "",
-                  0, "cash", 25, (Area(new_id(), "Cozinha"),), PARTNER_PHONE, (), (invite,))
+                  0, "cash", 25, (Area(new_id(), "Cozinha"),), PARTNER_PHONE, (), (invite,), (), PARTNER_NAME)
     deps.repo.save_house(PARTNER_USER, house)
     deps.repo.save_pending_invite(PendingInvite(invite.id, phone, PARTNER_USER, house.id, house.name,
-                                                PARTNER_PHONE, invite.date))
+                                                PARTNER_PHONE, invite.date, PARTNER_NAME))

@@ -13,7 +13,8 @@ requires a valid Cognito token for every request.
 
 `start(require_login=True)` is used by local/e2e.py to test the login screen: the site then logs in
 through Cognito (which the test simulates) and the server accepts the simulated tokens: "token-<user>",
-and when <user> is "u" + DDD + number ("u11987654321"), that is the login's phone (to test invites)."""
+and when <user> is "u" + DDD + number ("u11987654321"), that is the login's phone (to test invites),
+optionally followed by "-" and the login's name ("u11987654321-Ana Lima")."""
 import argparse
 import os
 import re
@@ -33,6 +34,7 @@ from seed import seed as load_demo_data             # noqa: E402
 
 LOCAL_OWNER = "local-user"                          # the user every request belongs to without login
 LOCAL_PHONE = "+5511999990000"                      # and their phone (the demo data has invites to it)
+LOCAL_NAME = "Carlos Lima"                          # and their name
 # Same as CloudFront's (infra/frontend.tf): if the site breaks with it, the test catches it before deploy.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self' https://cognito-idp.sa-east-1.amazonaws.com; frame-ancestors 'none'; "
@@ -45,13 +47,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         """Plays the part of API Gateway's JWT authorizer: decides which user the request is from, and
         their phone (Cognito's ID token has it: the login is the phone)."""
         if not self.server.require_login:
-            return {"sub": LOCAL_OWNER, "phone_number": LOCAL_PHONE}
+            return {"sub": LOCAL_OWNER, "phone_number": LOCAL_PHONE, "name": LOCAL_NAME}
         authorization = self.headers.get("Authorization", "")
         if not authorization.startswith("Bearer token-"):
             return None
         user = authorization[len("Bearer token-"):]
-        phone = re.fullmatch(r"u(\d{10,11})", user)
-        return {"sub": user, **({"phone_number": f"+55{phone[1]}"} if phone else {})}
+        login = re.fullmatch(r"u(\d{10,11})(?:-([A-Za-z ]+))?", user)
+        if not login:
+            return {"sub": user}
+        return {"sub": f"u{login[1]}", "phone_number": f"+55{login[1]}", **({"name": login[2]} if login[2] else {})}
 
     def _api(self):
         url = urlparse(self.path)
@@ -113,7 +117,7 @@ def start(port=8765, require_login=False, demo_data=False):
     server.require_login = require_login
     server.deps = Dependencies(MemoryRepository())
     if demo_data:
-        load_demo_data(server.deps, LOCAL_OWNER, date.today(), LOCAL_PHONE)
+        load_demo_data(server.deps, LOCAL_OWNER, date.today(), LOCAL_PHONE, LOCAL_NAME)
     return server
 
 

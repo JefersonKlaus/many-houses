@@ -159,6 +159,7 @@ class Partner:
     id: str
     user: str
     phone: str
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -228,13 +229,15 @@ class PendingInvite:
     house_name: str
     from_phone: str
     date: str
+    from_name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "PendingInvite":
-        return cls(d["id"], d["phone"], d["owner"], d["house_id"], d["house_name"], d["from_phone"], d["date"])
+        return cls(d["id"], d["phone"], d["owner"], d["house_id"], d["house_name"], d["from_phone"], d["date"],
+                   d.get("from_name", ""))
 
 
 @dataclass(frozen=True)
@@ -259,6 +262,7 @@ class House:
     partners: tuple[Partner, ...] = ()
     invites: tuple[Invite, ...] = ()
     purchase_shares: tuple[Share, ...] = ()     # set at registration; empty: the owner paid the whole purchase
+    owner_name: str = ""
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None,
@@ -276,7 +280,8 @@ class House:
                    _text(payload, "notes", 2000, required=False), down_payment, payment_type,
                    _percent(payload, "target_profit_percent"), _areas(payload, previous.areas if previous else ()),
                    previous.owner_phone if previous else "", previous.partners if previous else (),
-                   previous.invites if previous else (), previous.purchase_shares if previous else ())
+                   previous.invites if previous else (), previous.purchase_shares if previous else (),
+                   previous.owner_name if previous else "")
 
     @property
     def upfront_cents(self) -> int:
@@ -308,9 +313,10 @@ class House:
                    d.get("target_profit_percent", 0),
                    tuple(Area(a["id"], a["name"]) for a in d.get("areas", ())),
                    d.get("owner_phone", ""),
-                   tuple(Partner(p["id"], p["user"], p["phone"]) for p in d.get("partners", ())),
+                   tuple(Partner(p["id"], p["user"], p["phone"], p.get("name", "")) for p in d.get("partners", ())),
                    tuple(Invite(i["id"], i["phone"], i["date"]) for i in d.get("invites", ())),
-                   tuple(Share(s["member_id"], s["cents"]) for s in d.get("purchase_shares", ())))
+                   tuple(Share(s["member_id"], s["cents"]) for s in d.get("purchase_shares", ())),
+                   d.get("owner_name", ""))
 
 
 @dataclass(frozen=True)

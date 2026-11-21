@@ -26,3 +26,11 @@ def test_demo_data_is_valid_and_looks_used():
     for inst in deps.repo.list_installments("me"):
         assert Installment.from_input(inst.to_dict(), inst.house_id, inst.id) == inst
         assert (inst.paid_date != "") == (inst.due_date <= "2026-11-20")     # due ones are paid, the rest open
+
+
+def test_demo_data_keeps_the_users_name():
+    deps = Dependencies(MemoryRepository())
+    seed(deps, "me", date(2026, 11, 20), "+5511999990000", "Carlos Lima")
+    assert {h.owner_name for h in deps.repo.list_houses("me")} == {"Carlos Lima"}
+    (invite,) = deps.repo.list_pending_invites("+5511999990000")
+    assert invite.from_name == "Marcos Pereira"

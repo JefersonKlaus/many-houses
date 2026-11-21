@@ -125,6 +125,8 @@ fieldset.choices legend { padding: 0; margin-bottom: 4px; font-size: .9rem; colo
 .members li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0;
   border-top: 1px solid var(--border); }
 .members li.pending { color: var(--muted); }
+.members li .muted { font-size: .85rem; }
+.members li.pending strong { font-weight: 600; color: var(--muted); }
 button.link.danger-link { padding: 4px 0; color: var(--danger); width: auto; }
 .invite-form { margin-top: 12px; }
 .buyers-fields .partner-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 8px; }

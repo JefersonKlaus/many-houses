@@ -23,7 +23,8 @@ def url_of(server):
 
 def cognito(route):
     """First access requires a new password, like a user created by the administrator. The token is
-    "token-u<DDD + number>": the local server takes the login and its phone from it (local/server.py)."""
+    "token-u<DDD + number>-<name>": the local server takes the login, its phone and its name from it
+    (local/server.py)."""
     target = route.request.headers["x-amz-target"].split(".")[-1]
     body = json.loads(route.request.post_data)
     username = (body.get("AuthParameters") or body.get("ChallengeResponses") or {}).get("USERNAME")
@@ -35,9 +36,12 @@ def cognito(route):
     if target == "InitiateAuth":
         response = {"ChallengeName": "NEW_PASSWORD_REQUIRED", "Session": "session-1"}
     else:
-        token = f"token-u{username[3:]}"
+        token = f"token-u{username[3:]}-{NAMES[username[3:]]}"
         response = {"AuthenticationResult": {"IdToken": token, "ExpiresIn": 3600, "RefreshToken": "r"}}
     route.fulfill(status=200, content_type="application/x-amz-json-1.1", body=json.dumps(response))
+
+
+NAMES = {"11987654321": "Ana Lima", "21922222222": "Bruno Reis"}     # the logins' names (Cognito's `name`)
 
 
 def log_in(page, phone):
@@ -221,7 +225,7 @@ def run():
         partner.route("https://cognito-idp.sa-east-1.amazonaws.com/", cognito)
         partner.goto(url_of(server))
         log_in(partner, "21922222222")
-        expect(partner.locator(".card.invite")).to_contain_text("(11) 98765-4321 convidou você")
+        expect(partner.locator(".card.invite")).to_contain_text("Ana Lima ((11) 98765-4321) convidou você")
         expect(partner.locator(".card.invite")).to_contain_text("Casa Azul")
         partner.click(".card.invite >> text=Aceitar")
         expect(partner.locator("h1")).to_contain_text("Casa Azul")
@@ -242,7 +246,11 @@ def run():
         expect(rows).to_have_count(2)
         expect(rows.nth(0)).to_contain_text("Você")
         expect(rows.nth(0)).to_contain_text("161.000,00")      # entrada + costs 78.000, installment 80.000, cost 3.000
-        expect(rows.nth(1)).to_contain_text("(21) 92222-2222")
+        expect(rows.nth(1)).to_contain_text("Bruno Reis")                                # by name
+        expect(page.locator("#partners .members li").nth(1)).to_contain_text("Bruno Reis")
+        expect(page.locator("#partners .members li").nth(1)).to_contain_text("(21) 92222-2222")
+        expect(page.locator("#partners")).not_to_contain_text("Total pago")       # the totals: in their own card
+        expect(page.locator("#investment")).to_contain_text("Quanto cada um investiu")
         expect(rows.nth(1)).to_contain_text("2.000,00")
         expect(page.locator("text=Dividir a compra")).to_have_count(0)  # the purchase is only split when registering
 
@@ -309,7 +317,7 @@ def run_without_login():
         expect(page.locator("#areas li").first).to_contain_text("Telhado")
         expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Banheiros, Cozinha")
         expect(page.locator("#expenses tbody tr")).to_have_count(7)
-        expect(page.locator("#expenses tbody")).to_contain_text("pago por (11) 98888-7777")   # bought with a partner
+        expect(page.locator("#expenses tbody")).to_contain_text("pago por Marcos Pereira")    # bought with a partner
         page.click("#tab-installments")
         expect(page.locator("#installments tbody tr")).to_have_count(10)               # a page of a long plan
         expect(page.locator("#installments .pager-page")).to_contain_text("de 12")
@@ -331,7 +339,7 @@ def run_without_login():
 
         # an invite waiting on top of the list: accepting it opens the house
         page.click("text=‹ Casas")
-        expect(page.locator(".card.invite")).to_contain_text("(11) 98888-7777 convidou você")
+        expect(page.locator(".card.invite")).to_contain_text("Marcos Pereira ((11) 98888-7777) convidou você")
         page.click(".card.invite >> text=Aceitar")
         expect(page.locator("h1")).to_contain_text("Casa Vila Rica")
         page.click("#tab-partners")

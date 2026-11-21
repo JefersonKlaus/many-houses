@@ -12,5 +12,6 @@ def list_invites(deps: Dependencies, user: str, phone: str) -> list[dict[str, An
     if not phone:
         return []
     invites = sorted(deps.repo.list_pending_invites(phone), key=lambda i: (i.date, i.id))
-    return [{"id": i.id, "house_name": i.house_name, "from_phone": i.from_phone, "date": i.date}
+    return [{"id": i.id, "house_name": i.house_name, "from_name": i.from_name, "from_phone": i.from_phone,
+             "date": i.date}
             for i in invites if i.owner != user]

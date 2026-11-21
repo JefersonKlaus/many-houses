@@ -1,7 +1,7 @@
 """Application rules that more than one use case applies. They only go through the ports."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -123,9 +123,20 @@ def sorted_installments(installments: Iterable[Installment]) -> list[Installment
 def members(house: House) -> list[dict[str, Any]]:
     """The owner first, then the partners, then the ones invited who didn't answer yet ("invited"):
     how the screens list and name them."""
-    return ([{"id": OWNER_MEMBER_ID, "phone": house.owner_phone, "role": "owner"}]
-            + [{"id": p.id, "phone": p.phone, "role": "partner"} for p in house.partners]
-            + [{"id": i.id, "phone": i.phone, "role": "invited"} for i in house.invites])
+    return ([{"id": OWNER_MEMBER_ID, "name": house.owner_name, "phone": house.owner_phone, "role": "owner"}]
+            + [{"id": p.id, "name": p.name, "phone": p.phone, "role": "partner"} for p in house.partners]
+            + [{"id": i.id, "name": "", "phone": i.phone, "role": "invited"} for i in house.invites])
+
+
+def with_my_name(access: Access, name: str) -> House:
+    """The house with the user's current name (it can change in their login): kept on each change they make."""
+    house = access.house
+    if not name:
+        return house
+    if access.is_owner:
+        return house if house.owner_name == name else replace(house, owner_name=name)
+    return replace(house, partners=tuple(replace(p, name=name) if p.id == access.member_id else p
+                                         for p in house.partners))
 
 
 def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Installment] = ()) -> dict[str, Any]:
@@ -202,7 +213,7 @@ def payment(house: House, installments: Iterable[Installment]) -> dict[str, Any]
 def public_house(house: House) -> dict[str, Any]:
     """The house as the screens get it: the partners' logins (`user`) are not shown, only their phones."""
     data = house.to_dict()
-    data["partners"] = [{"id": p.id, "phone": p.phone} for p in house.partners]
+    data["partners"] = [{"id": p.id, "name": p.name, "phone": p.phone} for p in house.partners]
     for key in ("areas", "invites", "purchase_shares"):        # lists, as in the JSON the screens get
         data[key] = list(data[key])
     return data

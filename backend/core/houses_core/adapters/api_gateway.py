@@ -23,6 +23,7 @@ class Request:
     query: dict[str, str]
     path: dict[str, str]                # the {...} in the route: {"id": <house>, "expense_id": ...}
     phone: str = ""                     # the login's phone ("+55..."), from the same token; "" if it has none
+    name: str = ""                      # the login's name, from the same token; "" if it has none
 
     @property
     def id(self) -> Optional[str]:
@@ -44,7 +45,7 @@ def endpoint(action: Action, *, status: int = 200) -> Handle:
                 return response(404, {"error": "não encontrado"})
             method = event["requestContext"]["http"]["method"]
             request = Request(owner, _body(event) if method in ("POST", "PUT") else {},
-                              event.get("queryStringParameters") or {}, dict(path), _phone(event))
+                              event.get("queryStringParameters") or {}, dict(path), _phone(event), _name(event))
             result = action(deps, request)
             return response(status, None if status == 204 else result)
         except PermissionError:
@@ -79,6 +80,12 @@ def _phone(event: dict[str, Any]) -> str:
     claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
     phone = claims.get("phone_number", "")
     return phone if isinstance(phone, str) and phone.startswith("+") else ""
+
+
+def _name(event: dict[str, Any]) -> str:
+    """The login's name (`name` in the ID token, set when the login is created): how partners see each other."""
+    name = event["requestContext"]["authorizer"]["jwt"]["claims"].get("name", "")
+    return " ".join(name.split())[:80] if isinstance(name, str) else ""
 
 
 def _body(event: dict[str, Any]) -> dict[str, Any]:
