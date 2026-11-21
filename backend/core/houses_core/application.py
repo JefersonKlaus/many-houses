@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from .domain.errors import Forbidden, NotFound, ValidationError
+from .domain.errors import NotFound, ValidationError
 from .domain.models import EXPENSE_CATEGORIES, OWNER_MEMBER_ID, Expense, House, Installment
 from .ports import Repository
 
@@ -21,8 +21,9 @@ def today() -> str:
 
 @dataclass(frozen=True)
 class Access:
-    """A user's access to a house: `owner` is whose data it is kept in (the house's owner), `member_id`
-    is who the user is in it (OWNER_MEMBER_ID for the owner, the partner's id for a partner)."""
+    """A user's access to a house: `owner` is whose data it is kept in (whoever registered it), `member_id`
+    is who the user is in it (OWNER_MEMBER_ID for whoever registered it, the partner's id for the others).
+    It is only about where the data is: all partners can do the same things."""
     owner: str
     house: House
     member_id: str
@@ -46,11 +47,6 @@ def house_access(repo: Repository, user: str, id: Any) -> Access:
     if partner is None:
         raise NotFound("casa não encontrada")
     return Access(owner, house, partner.id)
-
-
-def require_owner(access: Access, action: str) -> None:
-    if not access.is_owner:
-        raise Forbidden(f"só o dono da casa pode {action}")
 
 
 def get_expense(repo: Repository, access: Access, id: Any) -> Expense:

@@ -11,7 +11,7 @@ from decline_invite.use_case import decline_invite
 from delete_house.use_case import delete_house
 from delete_invite.use_case import delete_invite
 from get_house.use_case import get_house
-from houses_core.domain.errors import Forbidden, NotFound, ValidationError
+from houses_core.domain.errors import NotFound, ValidationError
 from houses_core.domain.models import OWNER_MEMBER_ID
 from list_houses.use_case import list_houses
 from list_invites.use_case import list_invites
@@ -109,15 +109,28 @@ def test_the_same_person_is_not_invited_twice(deps):
         create_invite(deps, OWNER, hid, {"phone": "31933333333"}, OWNER_PHONE)
 
 
-def test_only_the_owner_invites_removes_partners_and_deletes(deps):
+def test_partners_are_equal(deps):
+    """Whoever registered the house and the partners can do the same things: invite, cancel an invite,
+    remove a partner, delete the house."""
     hid, partner = shared_house(deps)
-    view = get_house(deps, OWNER, hid)
-    for call in (lambda: create_invite(deps, OTHER, hid, {"phone": "31933333333"}, OTHER_PHONE),
-                 lambda: remove_partner(deps, OTHER, hid, partner),
-                 lambda: delete_house(deps, OTHER, hid)):
-        with pytest.raises(Forbidden, match="só o dono"):
-            call()
-    assert get_house(deps, OWNER, hid) == view
+    view = create_invite(deps, OTHER, hid, {"phone": "31933333333"}, OTHER_PHONE)        # a partner invites
+    (pending,) = list_invites(deps, THIRD, THIRD_PHONE)
+    assert pending["from_phone"] == OTHER_PHONE                                         # from whoever invited
+    assert delete_invite(deps, OTHER, hid, view["house"]["invites"][0]["id"])["house"]["invites"] == []
+    create_invite(deps, OTHER, hid, {"phone": "31933333333"}, OTHER_PHONE)
+    accept_invite(deps, THIRD, list_invites(deps, THIRD, THIRD_PHONE)[0]["id"], THIRD_PHONE)
+    third = get_house(deps, THIRD, hid)["me"]
+    view = remove_partner(deps, OTHER, hid, third)                                      # a partner removes another
+    assert [m["phone"] for m in view["members"]] == [OWNER_PHONE, OTHER_PHONE]
+    with pytest.raises(ValidationError, match="a si mesmo"):
+        remove_partner(deps, OTHER, hid, partner)
+    with pytest.raises(NotFound):                                                       # who registered it stays
+        remove_partner(deps, OTHER, hid, OWNER_MEMBER_ID)
+    with pytest.raises(ValidationError, match="já é sócia"):
+        create_invite(deps, OTHER, hid, {"phone": "11911111111"}, OTHER_PHONE)
+    delete_house(deps, OTHER, hid)                                                      # a partner deletes it
+    assert list_houses(deps, OWNER) == [] and list_houses(deps, OTHER) == []
+    assert deps.repo.list_expenses(OWNER) == [] and deps.repo.list_links(OTHER) == []
 
 
 def test_a_partner_changes_the_house_and_keeps_who_is_in_it(deps):

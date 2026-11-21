@@ -225,8 +225,8 @@ def run():
         expect(partner.locator(".card.invite")).to_contain_text("Casa Azul")
         partner.click(".card.invite >> text=Aceitar")
         expect(partner.locator("h1")).to_contain_text("Casa Azul")
-        expect(partner.locator("text=Você é sócio. Dono")).to_be_visible()
-        expect(partner.locator("button.danger:has-text('Excluir')")).to_have_count(0)    # only the owner deletes
+        expect(partner.locator("button.danger:has-text('Excluir')")).to_have_count(1)    # partners are all equal
+        expect(partner.locator("text=dono")).to_have_count(0)
         partner.click("text=Novo custo")
         partner.fill("#e-description", "Azulejos")
         partner.fill("#e-amount", "2.000")
@@ -334,7 +334,9 @@ def run_without_login():
         expect(page.locator(".card.invite")).to_contain_text("(11) 98888-7777 convidou você")
         page.click(".card.invite >> text=Aceitar")
         expect(page.locator("h1")).to_contain_text("Casa Vila Rica")
-        expect(page.locator("text=Você é sócio. Dono")).to_be_visible()
+        page.click("#tab-partners")
+        expect(page.locator("#p-phone")).to_have_count(1)                              # a partner invites too
+        expect(page.locator("#partners")).not_to_contain_text("dono")
         page.click("text=‹ Casas")
         expect(page.locator(".card.invite")).to_have_count(0)
         expect(page.locator(".list-item")).to_have_count(5)                            # sold ones still shown

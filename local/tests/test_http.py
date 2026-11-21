@@ -65,8 +65,8 @@ def test_full_flow(api):
 
 
 def test_partners_over_http(api):
-    """The phone comes from the token (Cognito's phone_number), never from the body; a partner gets 403
-    for what only the owner does."""
+    """The phone comes from the token (Cognito's phone_number), never from the body; partners can all do
+    the same things."""
     hid = call(api, "POST", "/houses", house_input(), phone="+5511911111111")[1]["house"]["id"]
     status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "21922222222"}, phone="+5511911111111")
     assert status == 201 and view["house"]["owner_phone"] == "+5511911111111"
@@ -77,8 +77,10 @@ def test_partners_over_http(api):
                 phone="+5521922222222") == (200, {"house_id": hid})
     status, view = call(api, "GET", f"/houses/{hid}", owner="owner-b")
     assert status == 200 and view["role"] == "partner"
-    status, body = call(api, "DELETE", f"/houses/{hid}", owner="owner-b")
-    assert status == 403 and "dono" in body["error"]
+    status, body = call(api, "POST", f"/houses/{hid}/invites", {"phone": "41944444444"}, owner="owner-b",
+                        phone="+5521922222222")
+    assert status == 201                                                            # a partner invites too
+    assert call(api, "DELETE", f"/houses/{hid}/invites/{body['house']['invites'][0]['id']}", owner="owner-b")[0] == 200
     partner = view["me"]
     status, view = call(api, "POST", f"/houses/{hid}/expenses", {**expense_input(), "paid_by": partner}, owner="owner-b")
     assert status == 201

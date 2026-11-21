@@ -12,7 +12,3 @@ class ValidationError(BusinessError):
 class NotFound(BusinessError):
     status = 404
 
-
-class Forbidden(BusinessError):
-    """The user can see the house but this is for its owner only (inviting, removing a partner...)."""
-    status = 403

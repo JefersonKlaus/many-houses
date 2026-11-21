@@ -103,9 +103,9 @@ backend/
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
 | `POST /houses/{id}/installments` | add N monthly installments at once (`count`, `amount_cents`, `first_due_date`) |
 | `PUT` · `DELETE /houses/{id}/installments/{installment_id}` | change (or mark as paid: `paid_date`, `paid_by`), delete an installment |
-| `POST /houses/{id}/invites` · `DELETE /houses/{id}/invites/{invite_id}` | invite a partner by phone, cancel an invite (owner only) |
+| `POST /houses/{id}/invites` · `DELETE /houses/{id}/invites/{invite_id}` | invite a partner by phone, cancel an invite |
 | `GET /invites` · `POST /invites/{id}/accept` · `POST /invites/{id}/decline` | the invites sent to the login's phone; accept, decline one |
-| `DELETE /houses/{id}/partners/{partner_id}` | remove a partner with nothing paid registered (owner only) |
+| `DELETE /houses/{id}/partners/{partner_id}` | remove another partner with nothing paid registered |
 
 Every change to a house (all but `DELETE /houses/{id}`) answers the same thing as `GET /houses/{id}`:
 the screen draws the house's page from that answer, with no second request.
@@ -122,9 +122,11 @@ Rules worth knowing:
   split is only set when registering. Each partner is invited by phone; the invite waits under that
   phone (even before that person has a login) and shows on top of their list to accept or decline;
   accepting, they keep the invite's id, so their share stays theirs. The owner can invite more
-  partners later (they have no share of the purchase). A partner sees and changes everything in the
-  house except deleting it and inviting or removing partners (403). Each cost and paid installment
-  has `paid_by` (a member; empty = the owner; by default whoever registers it); with the purchase
+  partners later (they have no share of the purchase). Partners are all equal: any of them changes
+  everything, invites, removes another partner and deletes the house. The only difference is
+  technical: the house is kept in the data of whoever registered it, so that one can't be removed.
+  Each cost and paid installment has `paid_by` (a member; empty = whoever registered the house; by
+  default whoever registers the payment); with the purchase
   shares, `totals.by_member` says how much each one put in.
 - The login is the phone: the screen takes DDD + number (digits only) and sends `+55<digits>` to Cognito.
 - Money is always integer cents (`purchase_price_cents`, `amount_cents`...), never a float.
