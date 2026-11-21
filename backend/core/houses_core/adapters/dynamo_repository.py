@@ -1,20 +1,23 @@
 """DynamoDB repository, single table.
 
-PK = OWNER#<owner>   SK = HOUSE#<house id> | EXP#<house id>#<expense id>
+PK = OWNER#<owner>   SK = HOUSE#<house id> | EXP#<house id>#<expense id> | INST#<house id>#<installment id>
 
 The item stores the whole object as JSON in the `data` attribute. One house's costs are one query
-(begins_with EXP#<house id>#); every house's costs, another (begins_with EXP#). The `owner` always
+(begins_with EXP#<house id>#); every house's costs, another (begins_with EXP#). Installments (prestações) work the same way with INST#. The `owner` always
 comes from the login token, never from what the browser sends: that is what keeps each user's data apart.
 """
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Optional
 
-from ..domain.models import Expense, House
+from ..domain.models import Expense, House, Installment
 
-OWNER_PREFIX, HOUSE_PREFIX, EXPENSE_PREFIX = "OWNER#", "HOUSE#", "EXP#"
+OWNER_PREFIX, HOUSE_PREFIX, EXPENSE_PREFIX, INSTALLMENT_PREFIX = "OWNER#", "HOUSE#", "EXP#", "INST#"
 DATA_ATTRIBUTE = "data"
+BATCH_SIZE = 25                 # the most BatchWriteItem takes in one call
+BATCH_ATTEMPTS = 8
 
 
 class DynamoRepository:
@@ -35,6 +38,18 @@ class DynamoRepository:
 
     def _delete(self, owner: str, sk: str) -> None:
         self.client.delete_item(TableName=self.table, Key=self._key(owner, sk))
+
+    def _batch(self, requests: list[dict[str, Any]]) -> None:
+        """Writes/deletes in calls of 25; what DynamoDB leaves unprocessed (throttling) is sent again."""
+        for start in range(0, len(requests), BATCH_SIZE):
+            pending = {self.table: requests[start:start + BATCH_SIZE]}
+            for attempt in range(BATCH_ATTEMPTS):
+                pending = self.client.batch_write_item(RequestItems=pending).get("UnprocessedItems") or {}
+                if not pending:
+                    break
+                time.sleep(0.05 * 2 ** attempt)
+            else:
+                raise RuntimeError("DynamoDB did not accept every item of the batch")
 
     def _query_prefix(self, owner: str, prefix: str) -> list[dict[str, Any]]:
         items, start_key = [], None
@@ -78,3 +93,21 @@ class DynamoRepository:
 
     def delete_expense(self, owner: str, house_id: str, id: str) -> None:
         self._delete(owner, f"{EXPENSE_PREFIX}{house_id}#{id}")
+
+    # -------------------------------------------------------------- installments (prestações)
+    def list_installments(self, owner: str, house_id: Optional[str] = None) -> list[Installment]:
+        prefix = f"{INSTALLMENT_PREFIX}{house_id}#" if house_id else INSTALLMENT_PREFIX
+        return [Installment.from_dict(d) for d in self._query_prefix(owner, prefix)]
+
+    def get_installment(self, owner: str, house_id: str, id: str) -> Optional[Installment]:
+        data = self._read(owner, f"{INSTALLMENT_PREFIX}{house_id}#{id}")
+        return Installment.from_dict(data) if data else None
+
+    def save_installments(self, owner: str, installments: list[Installment]) -> None:
+        self._batch([{"PutRequest": {"Item": {
+            **self._key(owner, f"{INSTALLMENT_PREFIX}{i.house_id}#{i.id}"),
+            DATA_ATTRIBUTE: {"S": json.dumps(i.to_dict(), ensure_ascii=False)}}}} for i in installments])
+
+    def delete_installments(self, owner: str, house_id: str, ids: list[str]) -> None:
+        self._batch([{"DeleteRequest": {"Key": self._key(owner, f"{INSTALLMENT_PREFIX}{house_id}#{id}")}}
+                     for id in ids])

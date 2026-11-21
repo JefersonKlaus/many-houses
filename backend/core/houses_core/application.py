@@ -4,11 +4,12 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from .domain.errors import NotFound, ValidationError
-from .domain.models import EXPENSE_CATEGORIES, Expense, House
+from .domain.models import EXPENSE_CATEGORIES, Expense, House, Installment
 from .ports import Repository
 
 MAX_HOUSES = 500
 MAX_EXPENSES_PER_HOUSE = 2000
+MAX_INSTALLMENTS_PER_HOUSE = 600
 
 
 def get_house(repo: Repository, owner: str, id: Any) -> House:
@@ -26,6 +27,14 @@ def get_expense(repo: Repository, owner: str, house_id: Any, id: Any) -> Expense
     return expense
 
 
+def get_installment(repo: Repository, owner: str, house_id: Any, id: Any) -> Installment:
+    get_house(repo, owner, house_id)
+    installment = repo.get_installment(owner, house_id, id) if isinstance(id, str) else None
+    if installment is None:
+        raise NotFound("prestação não encontrada")
+    return installment
+
+
 def check_house_limit(repo: Repository, owner: str) -> None:
     if len(repo.list_houses(owner)) >= MAX_HOUSES:
         raise ValidationError(f"limite de {MAX_HOUSES} casas atingido")
@@ -34,6 +43,11 @@ def check_house_limit(repo: Repository, owner: str) -> None:
 def check_expense_limit(repo: Repository, owner: str, house_id: str) -> None:
     if len(repo.list_expenses(owner, house_id)) >= MAX_EXPENSES_PER_HOUSE:
         raise ValidationError(f"limite de {MAX_EXPENSES_PER_HOUSE} custos nesta casa atingido")
+
+
+def check_installment_limit(repo: Repository, owner: str, house_id: str, adding: int) -> None:
+    if len(repo.list_installments(owner, house_id)) + adding > MAX_INSTALLMENTS_PER_HOUSE:
+        raise ValidationError(f"limite de {MAX_INSTALLMENTS_PER_HOUSE} prestações nesta casa")
 
 
 def sorted_houses(houses: Iterable[House]) -> list[House]:
@@ -45,8 +59,14 @@ def sorted_expenses(expenses: Iterable[Expense]) -> list[Expense]:
     return sorted(expenses, key=lambda e: (e.date, e.id), reverse=True)
 
 
-def totals(house: House, expenses: Iterable[Expense]) -> dict[str, Any]:
-    """What a house cost: the purchase (price + its costs), the renovation (by category) and the sum."""
+def sorted_installments(installments: Iterable[Installment]) -> list[Installment]:
+    """In the order they are due."""
+    return sorted(installments, key=lambda i: (i.due_date, i.id))
+
+
+def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Installment] = ()) -> dict[str, Any]:
+    """What a house cost: the purchase (price + its costs), the renovation (by category) and the sum.
+    `payment`: how the price is being paid, the entrada plus the installments paid and still open."""
     by_category = dict.fromkeys(EXPENSE_CATEGORIES, 0)
     count = 0
     for e in expenses:
@@ -55,4 +75,27 @@ def totals(house: House, expenses: Iterable[Expense]) -> dict[str, Any]:
     renovation = sum(by_category.values())
     return {"purchase_cents": house.purchase_total_cents, "renovation_cents": renovation,
             "total_cents": house.purchase_total_cents + renovation, "expense_count": count,
-            "by_category": by_category}
+            "by_category": by_category, "payment": payment(house, installments)}
+
+
+def payment(house: House, installments: Iterable[Installment]) -> dict[str, Any]:
+    installments = list(installments)
+    paid = [i for i in installments if i.paid]
+    open_ = sorted_installments(i for i in installments if not i.paid)
+    paid_cents = sum(i.amount_cents for i in paid)
+    return {"down_payment_cents": house.down_payment_cents,
+            "installments_count": len(installments), "installments_cents": sum(i.amount_cents for i in installments),
+            "paid_count": len(paid), "paid_cents": paid_cents, "open_cents": sum(i.amount_cents for i in open_),
+            "next_due_date": open_[0].due_date if open_ else None,
+            "total_paid_cents": house.down_payment_cents + paid_cents}
+
+
+def house_view(repo: Repository, owner: str, house: House) -> dict[str, Any]:
+    """One house's page: the house, its costs (newest first), its installments (in due order) and the totals.
+    GET /houses/{id} answers this, and so does every change to a house, so the screen redraws at once,
+    without a second request."""
+    expenses = sorted_expenses(repo.list_expenses(owner, house.id))
+    installments = sorted_installments(repo.list_installments(owner, house.id))
+    return {"house": house.to_dict(), "expenses": [e.to_dict() for e in expenses],
+            "installments": [i.to_dict() for i in installments],
+            "totals": totals(house, expenses, installments)}

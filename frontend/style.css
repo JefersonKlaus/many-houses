@@ -97,6 +97,15 @@ button.link.back { padding-left: 0; color: var(--brand); margin-bottom: 4px; }
   vertical-align: middle; color: var(--muted); background: color-mix(in srgb, var(--muted) 15%, transparent); }
 .badge.status-renovating { color: var(--warn); background: var(--warn-light); }
 .badge.status-ready { color: var(--brand); background: var(--brand-light); }
+/* an installment: paid, overdue (due date passed, not paid) or open */
+td .badge { margin-left: 0; white-space: nowrap; }
+.badge.paid { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.badge.overdue { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.badge.open { color: var(--muted); background: color-mix(in srgb, var(--muted) 15%, transparent); }
+#installments .bar { display: block; margin-bottom: 8px; }
+#installments .paid-fill { background: var(--ok); }
+#installments tr.paid td:not(:last-child) { color: var(--muted); }
+#installments .paid-on { display: block; font-size: .75rem; }
 
 /* ------------------------------------------------------------------ totals */
 .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }

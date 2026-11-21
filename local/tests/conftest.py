@@ -16,10 +16,11 @@ OTHER = "owner-b"
 
 
 class FakeDynamo:
-    """Only what the repository uses: get, put, delete and a paginated begins_with query."""
+    """Only what the repository uses: get, put, delete, batch write and a paginated begins_with query.
+    `unprocessed`: how many batch calls leave their last item unprocessed (like DynamoDB throttling)."""
 
-    def __init__(self, page_size=2):
-        self.items, self.page_size = {}, page_size
+    def __init__(self, page_size=2, unprocessed=0):
+        self.items, self.page_size, self.unprocessed, self.batch_calls = {}, page_size, unprocessed, 0
 
     @staticmethod
     def _k(key):
@@ -34,6 +35,21 @@ class FakeDynamo:
 
     def delete_item(self, TableName, Key):
         self.items.pop(self._k(Key), None)
+
+    def batch_write_item(self, RequestItems):
+        self.batch_calls += 1
+        (table, requests), = RequestItems.items()
+        assert 1 <= len(requests) <= 25
+        left = []
+        if self.unprocessed:
+            self.unprocessed -= 1
+            requests, left = requests[:-1], requests[-1:]
+        for r in requests:
+            if "PutRequest" in r:
+                self.put_item(table, r["PutRequest"]["Item"])
+            else:
+                self.delete_item(table, r["DeleteRequest"]["Key"])
+        return {"UnprocessedItems": {table: left} if left else {}}
 
     def query(self, TableName, KeyConditionExpression, ExpressionAttributeValues,
               ConsistentRead=False, ExclusiveStartKey=None):
@@ -68,3 +84,7 @@ def house_input(**extra):
 def expense_input(**extra):
     return {"date": "2026-02-01", "category": "material", "description": "Cimento",
             "amount_cents": 150_000, "supplier": "Depósito", **extra}
+
+
+def plan_input(**extra):
+    return {"first_due_date": "2026-02-10", "amount_cents": 250_000, "count": 3, **extra}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Optional
 
-from houses_core.domain.models import Expense, House
+from houses_core.domain.models import Expense, House, Installment
 
 
 class MemoryRepository:
@@ -14,7 +14,7 @@ class MemoryRepository:
 
     def _owner(self, owner: str) -> dict[str, Any]:
         with self._lock:
-            return self._data.setdefault(owner, {"houses": {}, "expenses": {}})
+            return self._data.setdefault(owner, {"houses": {}, "expenses": {}, "installments": {}})
 
     def list_houses(self, owner: str) -> list[House]:
         return list(self._owner(owner)["houses"].values())
@@ -39,3 +39,17 @@ class MemoryRepository:
 
     def delete_expense(self, owner: str, house_id: str, id: str) -> None:
         self._owner(owner)["expenses"].pop((house_id, id), None)
+
+    def list_installments(self, owner: str, house_id: Optional[str] = None) -> list[Installment]:
+        return [i for i in list(self._owner(owner)["installments"].values()) if house_id is None or i.house_id == house_id]
+
+    def get_installment(self, owner: str, house_id: str, id: str) -> Optional[Installment]:
+        return self._owner(owner)["installments"].get((house_id, id))
+
+    def save_installments(self, owner: str, installments: list[Installment]) -> None:
+        for i in installments:
+            self._owner(owner)["installments"][(i.house_id, i.id)] = i
+
+    def delete_installments(self, owner: str, house_id: str, ids: list[str]) -> None:
+        for id in ids:
+            self._owner(owner)["installments"].pop((house_id, id), None)

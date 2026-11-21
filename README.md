@@ -1,8 +1,9 @@
 # Many Houses
 
 Manages houses bought to be renovated, serverless on AWS. For each house: what it cost to buy
-(price + ITBI, deed, broker...) and every renovation cost (material, labor, services, project,
-other), with the totals per house, per category and for all houses together.
+(price + ITBI, deed, broker...), how it is being paid (entrada and monthly installments, each one
+marked when paid) and every renovation cost (material, labor, services, project, other), with the
+totals per house, per category and for all houses together.
 
 The app's screens are in Brazilian Portuguese; code and docs are in English.
 
@@ -76,12 +77,13 @@ everything else lives in a shared core, copied into every Lambda's zip.
 ```
 backend/
   core/houses_core/
-    domain/          entities (House, Expense) and validation, pure Python
+    domain/          entities (House, Expense, Installment) and validation, pure Python
     ports.py         what use cases need: the Repository
     application.py   rules shared by several use cases (lookups, limits, totals)
     adapters/        DynamoDB, API Gateway input (login, ids, errors)
   lambdas/<action>/  list_houses, get_house, create_house, update_house, delete_house,
-                     create_expense, update_expense, delete_expense
+                     create_expense, update_expense, delete_expense,
+                     create_installments, update_installment, delete_installment
     use_case.py      the action (only domain + ports, never AWS)
     handler.py       API Gateway event -> use case -> HTTP response
     lambda.json      {"route": "POST /houses", "database": "write"}
@@ -91,9 +93,14 @@ backend/
 |---|---|
 | `GET /houses` | every house, each with its totals (purchase, renovation, total) |
 | `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register, change, delete a house (with its costs) |
-| `GET /houses/{id}` | one house, its costs (newest first) and its totals by category |
+| `GET /houses/{id}` | one house: its costs (newest first), its installments (in due order) and its totals |
 | `POST /houses/{id}/expenses` | add a renovation cost |
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
+| `POST /houses/{id}/installments` | add N monthly installments at once (`count`, `amount_cents`, `first_due_date`) |
+| `PUT` · `DELETE /houses/{id}/installments/{installment_id}` | change (or mark as paid: `paid_date`), delete an installment |
+
+Every change to a house (all but `DELETE /houses/{id}`) answers the same thing as `GET /houses/{id}`:
+the screen draws the house's page from that answer, with no second request.
 
 To add an action, create a folder with these three files. Terraform reads every `lambda.json` and
 creates the function, the route and the logs. Lambdas marked `"read"` can only read the table.
@@ -104,8 +111,11 @@ Rules worth knowing:
 - The login is the phone: the screen takes DDD + number (digits only) and sends `+55<digits>` to Cognito.
 - Money is always integer cents (`purchase_price_cents`, `amount_cents`...), never a float.
 - Purchase = price + purchase costs. Total invested = purchase + every renovation cost.
-- Deleting a house deletes its costs first, so no orphan is left behind.
-- DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>` or `EXP#<house id>#<id>`.
+- Bought in installments: entrada (`down_payment_cents`, at most the price) + installments, each one
+  paid when it has a `paid_date`. Paid so far = entrada + the paid installments.
+- Deleting a house deletes its costs and installments first, so no orphan is left behind.
+- DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>`, `EXP#<house id>#<id>` or
+  `INST#<house id>#<id>`. A payment plan is written with `BatchWriteItem`, 25 items per call.
 
 ### Local
 

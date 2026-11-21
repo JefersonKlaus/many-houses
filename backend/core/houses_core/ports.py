@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
-from .domain.models import Expense, House
+from .domain.models import Expense, House, Installment
 
 
 class Repository(Protocol):
@@ -21,6 +21,13 @@ class Repository(Protocol):
     def get_expense(self, owner: str, house_id: str, id: str) -> Optional[Expense]: ...
     def save_expense(self, owner: str, expense: Expense) -> None: ...
     def delete_expense(self, owner: str, house_id: str, id: str) -> None: ...
+
+    def list_installments(self, owner: str, house_id: Optional[str] = None) -> list[Installment]:
+        """One house's installments (prestações); with no house, every house's."""
+    def get_installment(self, owner: str, house_id: str, id: str) -> Optional[Installment]: ...
+    def save_installments(self, owner: str, installments: list[Installment]) -> None:
+        """Saves many at once (a whole payment plan): one call, not one per installment."""
+    def delete_installments(self, owner: str, house_id: str, ids: list[str]) -> None: ...
 
 
 @dataclass(frozen=True)

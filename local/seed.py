@@ -1,5 +1,6 @@
 """Demo data for the local server, so the app opens looking like it is in real use: a few houses in
 different stages (one being renovated, one ready, one sold, one just bought) with their renovation costs.
+Two of them were bought in installments: an entrada and monthly prestações, the ones already due are paid.
 
 Dates are relative to today, so the data always looks recent. Only used by `python local/server.py`
 (and `python dev.py serve`); the tests start from an empty database."""
@@ -7,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from houses_core.domain.models import Expense, House, new_id
+from houses_core.domain.models import Expense, House, Installment, add_months, new_id
 from houses_core.ports import Dependencies
 
 R = 100     # R$ 1,00 in cents
@@ -52,10 +53,22 @@ HOUSES = [  # name, address, bought N days ago, price, purchase costs, status, n
 ]
 
 
+PLANS = {  # house name: entrada, number of monthly installments, each one's amount
+    "Apartamento Centro 302": (90_000 * R, 36, 5_900 * R),
+    "Sobrado Vila Nova": (156_000 * R, 120, 3_480 * R),
+}
+
+
 def seed(deps: Dependencies, owner: str, today: date) -> None:
     for name, address, days_ago, price, costs, status, notes, expenses in HOUSES:
-        house = House(new_id(), name, address, (today - timedelta(days=days_ago)).isoformat(), price, costs, status, notes)
+        bought = (today - timedelta(days=days_ago)).isoformat()
+        down_payment, count, amount = PLANS.get(name, (0, 0, 0))
+        house = House(new_id(), name, address, bought, price, costs, status, notes, down_payment)
         deps.repo.save_house(owner, house)
+        first_due = add_months(bought, 1)
+        installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "")
+                        for due in (add_months(first_due, n) for n in range(count))]
+        deps.repo.save_installments(owner, installments)
         for ago, category, description, supplier, amount in expenses:
             deps.repo.save_expense(owner, Expense(new_id(), house.id, (today - timedelta(days=ago)).isoformat(),
                                                   category, description, amount, supplier))

@@ -86,10 +86,35 @@ def run():
         page.click("dialog >> text=Salvar")
         expect(page.locator(".toast.error").last).to_contain_text("Valor do imóvel")
         page.fill("#h-price", "300.000,00")
+        page.fill("#h-down", "60.000")
         page.fill("#h-costs", "18.000")
+        calls = []
+        page.on("request", lambda r: "/houses" in r.url and calls.append(f"{r.method} {r.url.split('/houses', 1)[1]}"))
         page.click("dialog >> text=Salvar")
         expect(page.locator("h1")).to_contain_text("Casa Azul")
         expect(page.locator("#house-totals")).to_contain_text("318.000,00")
+        assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
+        expect(page.locator("#purchase")).to_contain_text("60.000,00")                 # entrada
+        expect(page.locator("#purchase")).to_contain_text("240.000,00")                # the rest, in installments
+
+        # installments: three are added, the first is paid, the last deleted
+        page.click("text=Adicionar prestações")
+        page.fill("#i-count", "3")
+        page.fill("#i-amount", "80.000")
+        page.fill("#i-first", "2026-02-15")
+        page.click("dialog >> text=Adicionar")
+        expect(page.locator("#installments tbody tr")).to_have_count(3)
+        expect(page.locator("#installments tbody")).to_contain_text("15/04/2026")
+        expect(page.locator("#installments .totals")).to_contain_text("0 de 3")
+        page.locator("#installments tbody tr").first.locator(".kebab").click()
+        page.locator(".menu-list:not([hidden]) [role=menuitem]", has_text="Marcar como paga").click()
+        expect(page.locator("#installments .totals")).to_contain_text("1 de 3")
+        expect(page.locator("#installments .totals")).to_contain_text("140.000,00")    # entrada + the paid one
+        expect(page.locator("#installments tbody tr").first.locator(".badge")).to_have_text("Paga")
+        page.locator("#installments tbody tr").last.locator(".kebab").click()
+        page.locator(".menu-list:not([hidden]) [role=menuitem]", has_text="Excluir").click()
+        expect(page.locator("#installments tbody tr")).to_have_count(2)
+        expect(page.locator("#installments .totals")).to_contain_text("1 de 2")
 
         # two renovation costs, then one is changed and the other deleted
         for description, category, amount in (("Cimento e areia", "material", "1.500,50"),
@@ -120,6 +145,7 @@ def run():
         # editing the house keeps its costs; the list shows its totals
         page.click("text=Editar casa")
         expect(page.locator("#h-price")).to_have_value("300.000,00")
+        expect(page.locator("#h-down")).to_have_value("60.000,00")
         page.select_option("#h-status", "ready")
         page.click("dialog >> text=Salvar")
         expect(page.locator("h1 .badge")).to_have_text("Pronta")
@@ -151,6 +177,8 @@ def run_without_login():
         page.locator(".list-item", has_text="Sobrado Vila Nova").click()
         expect(page.locator(".bars li")).to_have_count(4)
         expect(page.locator("#expenses tbody tr")).to_have_count(7)
+        expect(page.locator("#installments tbody tr")).to_have_count(12)               # a page of a long plan
+        expect(page.locator("#installments .pager-page")).to_contain_text("de 10")
         width = page.evaluate("document.documentElement.scrollWidth")
         assert width <= 390, f"the page scrolls sideways on a phone ({width}px)"
         browser.close()

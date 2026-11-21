@@ -57,10 +57,11 @@ resource "aws_iam_role" "lambda_read" {
   assume_role_policy = data.aws_iam_policy_document.lambda_trust.json
 }
 
-# Only what the functions use: read, write and delete items in this table. No Scan, no other tables.
+# Only what the functions use: read, write and delete items in this table (BatchWriteItem: a whole
+# payment plan at once). No Scan, no other tables.
 data "aws_iam_policy_document" "lambda_access" {
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchWriteItem"]
     resources = [aws_dynamodb_table.data.arn]
   }
 }
@@ -105,8 +106,10 @@ resource "aws_lambda_function" "action" {
   handler          = "${each.key}.handler.lambda_handler"
   filename         = data.archive_file.lambda[each.key].output_path
   source_code_hash = data.archive_file.lambda[each.key].output_base64sha256
-  memory_size      = 256
-  timeout          = 10
+  # Lambda gives CPU in proportion to memory: 512 MB starts a cold function (Python + boto3)
+  # noticeably faster than 256 MB. Billed per ms used: at this traffic, still cents a month.
+  memory_size = 512
+  timeout     = 10
 
   environment {
     variables = { TABLE_NAME = aws_dynamodb_table.data.name }

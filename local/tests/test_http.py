@@ -29,20 +29,33 @@ def api():
 
 
 def test_full_flow(api):
-    status, house = call(api, "POST", "/houses", house_input())
-    assert status == 201 and house["status"] == "renovating"
-    hid = house["id"]
-    status, expense = call(api, "POST", f"/houses/{hid}/expenses", expense_input())
-    assert status == 201 and expense["house_id"] == hid
+    status, view = call(api, "POST", "/houses", house_input(down_payment_cents=6_000_000))
+    assert status == 201 and view["house"]["status"] == "renovating"
+    hid = view["house"]["id"]
+    status, view = call(api, "POST", f"/houses/{hid}/expenses", expense_input())
+    assert status == 201 and view["totals"]["renovation_cents"] == 150_000
+    eid = view["expenses"][0]["id"]
     status, found = call(api, "GET", f"/houses/{hid}")
-    assert status == 200 and found["totals"]["renovation_cents"] == 150_000
-    status, changed = call(api, "PUT", f"/houses/{hid}/expenses/{expense['id']}", expense_input(amount_cents=10))
-    assert status == 200 and changed["amount_cents"] == 10
+    assert status == 200 and found == view
+    status, view = call(api, "PUT", f"/houses/{hid}/expenses/{eid}", expense_input(amount_cents=10))
+    assert status == 200 and view["expenses"][0]["amount_cents"] == 10
     status, houses = call(api, "GET", "/houses")
     assert status == 200 and houses[0]["totals"]["total_cents"] == 31_800_010
-    assert call(api, "PUT", f"/houses/{hid}", house_input(name="Nova"))[1]["name"] == "Nova"
-    assert call(api, "DELETE", f"/houses/{hid}/expenses/{expense['id']}") == (204, None)
-    assert call(api, "DELETE", f"/houses/{hid}/expenses/{expense['id']}")[0] == 404
+    assert call(api, "PUT", f"/houses/{hid}", house_input(name="Nova", down_payment_cents=6_000_000))[1]["house"]["name"] == "Nova"
+    status, view = call(api, "DELETE", f"/houses/{hid}/expenses/{eid}")
+    assert status == 200 and view["expenses"] == []
+    assert call(api, "DELETE", f"/houses/{hid}/expenses/{eid}")[0] == 404
+
+    status, view = call(api, "POST", f"/houses/{hid}/installments",
+                        {"first_due_date": "2026-02-10", "amount_cents": 100_000, "count": 2})
+    assert status == 201 and len(view["installments"]) == 2
+    first = view["installments"][0]
+    status, view = call(api, "PUT", f"/houses/{hid}/installments/{first['id']}", {**first, "paid_date": "2026-02-10"})
+    assert status == 200 and view["totals"]["payment"]["total_paid_cents"] == 6_100_000
+    status, view = call(api, "DELETE", f"/houses/{hid}/installments/{first['id']}")
+    assert status == 200 and len(view["installments"]) == 1
+    assert call(api, "DELETE", f"/houses/{hid}/installments/{first['id']}")[0] == 404
+
     assert call(api, "DELETE", f"/houses/{hid}") == (204, None)
     assert call(api, "GET", f"/houses/{hid}")[0] == 404
     assert call(api, "GET", "/houses")[1] == []
@@ -69,7 +82,8 @@ def test_the_owner_comes_from_the_token_not_from_the_body(api):
 @pytest.mark.parametrize("method, path", [
     ("GET", "/nothing"), ("PATCH", "/houses"), ("GET", "/houses/xyz"), ("GET", "/houses/"),
     ("DELETE", "/houses/ZZZZZZZZ"), ("GET", "/houses/abcd1234/expenses"),
-    ("PUT", "/houses/abcd1234/expenses/../x"),
+    ("PUT", "/houses/abcd1234/expenses/../x"), ("GET", "/houses/abcd1234/installments"),
+    ("PUT", "/houses/abcd1234/installments/NOT-AN-ID"),
 ])
 def test_odd_routes_are_404(api, method, path):
     assert call(api, method, path)[0] == 404
