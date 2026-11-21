@@ -391,7 +391,7 @@ export async function mount(container) {
     const { totals } = view;
     if (!ctx.shared) return null;
     const invested = totals.by_member.reduce((sum, r) => sum + r.total_cents, 0);
-    return h("div", { className: "card", id: "investment" }, h("h2", {}, "Quanto cada um investiu"),
+    return h("div", { className: "card", id: "investment" }, h("h2", {}, "Investimento por sócio"),
       h("div", { className: "table-scroll" }, h("table", { className: "money", id: "by-member" },
         h("thead", {}, h("tr", {}, ["Sócio", "Compra", "Prestações", "Reforma", "Total", ""].map((c, i) =>
           h("th", { className: i > 0 && i < 5 ? "num" : null }, c)))),

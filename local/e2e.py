@@ -250,7 +250,7 @@ def run():
         expect(page.locator("#partners .members li").nth(1)).to_contain_text("Bruno Reis")
         expect(page.locator("#partners .members li").nth(1)).to_contain_text("(21) 92222-2222")
         expect(page.locator("#partners")).not_to_contain_text("Total pago")       # the totals: in their own card
-        expect(page.locator("#investment")).to_contain_text("Quanto cada um investiu")
+        expect(page.locator("#investment")).to_contain_text("Investimento por sócio")
         expect(rows.nth(1)).to_contain_text("2.000,00")
         expect(page.locator("text=Dividir a compra")).to_have_count(0)  # the purchase is only split when registering
 
