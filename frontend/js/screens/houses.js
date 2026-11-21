@@ -257,7 +257,7 @@ export async function mount(container) {
           payment.next_due_date ? `próxima: ${formatDate(payment.next_due_date)}` : "tudo pago"),
         tile("Pago da compra", formatMoney(payment.total_paid_cents), "entrada + prestações pagas")),
       h("span", { className: "bar", title: percent(payment.paid_count, payment.installments_count) }, progress),
-      h("div", { className: "table-scroll" }, h("table", { className: "money" },
+      h("div", { className: "table-scroll" }, h("table", { className: "money", id: "installments-table" },
         h("thead", {}, h("tr", {}, ["Nº", "Vencimento", "Valor", "Situação", ""].map((c) => h("th", { className: c === "Valor" ? "num" : null }, c)))),
         body)),
       pager);
@@ -514,9 +514,9 @@ export async function mount(container) {
     const split = h("p", { className: "muted hint", id: "h-split" });
     const addPartner = () => {
       const row = h("div", { className: "partner-row" },
-        h("input", { className: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "Celular: 11987654321",
+        h("input", { className: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "Celular",
           "aria-label": "Celular do sócio (DDD + número)" }),
-        h("input", { className: "p-cents", inputMode: "decimal", placeholder: "Pagou (R$)", "aria-label": "Quanto o sócio pagou (R$)" }),
+        h("input", { className: "p-cents", inputMode: "decimal", placeholder: "Valor (R$)", "aria-label": "Quanto o sócio pagou (R$)" }),
         h("button", { type: "button", className: "link danger-link", "aria-label": "Tirar este sócio",
           onclick: () => { row.remove(); updateSplit(); } }, "✕"));
       row.querySelector(".p-cents").addEventListener("input", updateSplit);
@@ -537,7 +537,7 @@ export async function mount(container) {
     function updateSplit() {         // "Pago na compra R$ 318.000,00 · divisão: faltam R$ 18.000,00"
       const total = upfront();
       const parts = [ownerShare, ...partnerRows.querySelectorAll(".p-cents")].map((i) => toCents(i.value || "0"));
-      if (total === null || parts.some((v) => v === null)) { split.textContent = ""; return; }
+      if (!total || parts.some((v) => v === null)) { split.textContent = ""; return; }     // nothing to split yet
       const sum = parts.reduce((a, b) => a + b, 0);
       split.textContent = `Pago na compra: ${formatMoney(total)} · `
         + (sum === total ? "a divisão fecha." : `${sum < total ? "faltam" : "passam"} ${formatMoney(Math.abs(total - sum))}.`);

@@ -376,6 +376,12 @@ def run_without_login():
         expect(page.locator("#expenses tbody tr", has_text="Madeiramento")).to_contain_text("Ver NF")
         width = page.evaluate("document.documentElement.scrollWidth")
         assert width <= 390, f"the page scrolls sideways on a phone ({width}px)"
+        for tab in ("renovation", "purchase", "installments", "partners", "timeline"):     # every tab in sight
+            box = page.locator(f"#tab-{tab}").bounding_box()
+            assert box["x"] >= 0 and box["x"] + box["width"] <= 390, f"tab {tab} off the screen on a phone"
+        page.click("#tab-renovation")
+        amount = page.locator("#expenses tbody tr").first.locator("td.num").bounding_box()
+        assert amount["x"] + amount["width"] <= 390, "a cost's amount off the screen on a phone"
 
         # every list pages at 10: the 12 costs of a house in two pages
         page.click("text=‹ Casas")

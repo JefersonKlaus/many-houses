@@ -270,3 +270,49 @@ dialog.dialog::backdrop { background: rgba(0, 0, 0, .4); }
   text-align: left; font: inherit; color: var(--text); cursor: pointer; }
 .menu-list button:hover, .menu-list button:focus-visible { background: var(--brand-light); outline: none; }
 .menu-list .danger-item { color: var(--danger); }
+
+/* ------------------------------------------------------------------ phones */
+@media (max-width: 640px) {
+  /* the house's tabs: pills that wrap, so every tab is in sight (none hidden off to the side) */
+  .tabs { flex-wrap: wrap; gap: 6px; border-bottom: 0; overflow: visible; }
+  .tabs [role=tab] { margin: 0; padding: 7px 12px; border: 1px solid var(--border); border-radius: 999px; font-size: .9rem; }
+  .tabs [role=tab][aria-selected="true"] { border-color: var(--brand); background: var(--brand-light); }
+
+  /* the costs: one block each. Description and amount on top, the ⋮ on the right, date and category below */
+  #expenses thead, #installments-table thead { display: none; }
+  #expenses, #expenses tbody, #expenses tfoot, #installments-table, #installments-table tbody { display: block; }
+  #expenses tr { display: grid; grid-template-columns: auto 1fr auto auto; column-gap: 10px; padding: 10px 0;
+    grid-template-areas: "desc desc value menu" "date cat cat menu"; border-bottom: 1px solid var(--border); }
+  #expenses td { display: block; border: 0; padding: 0; }
+  #expenses td:nth-child(1) { grid-area: date; }
+  #expenses td:nth-child(2) { grid-area: desc; font-weight: 600; }
+  #expenses td:nth-child(2) > div { font-weight: 400; font-size: .85rem; }
+  #expenses td:nth-child(3) { grid-area: cat; }
+  #expenses td:nth-child(1), #expenses td:nth-child(3) { font-size: .85rem; color: var(--muted); }
+  #expenses td:nth-child(3) div { display: inline; }
+  #expenses td:nth-child(3) div::before { content: " · "; }
+  #expenses td:nth-child(4) { grid-area: value; font-weight: 600; }
+  #expenses td:nth-child(5) { grid-area: menu; width: auto; }
+  #expenses tfoot tr { grid-template-areas: "desc desc value menu"; border-bottom: 0; }
+  #expenses tfoot td:nth-child(1) { grid-area: desc; }
+  #expenses tfoot td:nth-child(2) { grid-area: value; }
+  #expenses tfoot td:nth-child(3) { grid-area: menu; }
+
+  /* the installments: number, due date and amount on top, the state below, the ⋮ on the right */
+  #installments-table tr { display: grid; grid-template-columns: 2rem 1fr auto auto; column-gap: 8px; padding: 8px 0;
+    grid-template-areas: "n due value menu" "n state state menu"; border-bottom: 1px solid var(--border); }
+  #installments-table td { display: block; border: 0; padding: 0; }
+  #installments-table td:nth-child(1) { grid-area: n; color: var(--muted); }
+  #installments-table td:nth-child(2) { grid-area: due; }
+  #installments-table td:nth-child(3) { grid-area: value; }
+  #installments-table td:nth-child(4) { grid-area: state; margin-top: 2px; }
+  #installments-table td:nth-child(4) .paid-on { display: inline; margin-left: 6px; }
+  #installments-table td:nth-child(5) { grid-area: menu; width: auto; }
+
+  /* forms: the whole screen, scrolling inside, with Salvar / Fechar always at hand at the bottom */
+  dialog.dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 16px 16px 0;
+    border-radius: 0; overflow-y: auto; }
+  dialog.dialog > .actions:last-child { position: sticky; bottom: 0; z-index: 1; margin: 14px -16px 0;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border); }
+  dialog.dialog > .actions:last-child button { flex: 1; }
+}
