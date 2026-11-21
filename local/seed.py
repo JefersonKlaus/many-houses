@@ -1,6 +1,7 @@
 """Demo data for the local server, so the app opens looking like it is in real use: a few houses in
 different stages (one being renovated, one ready, one sold, one just bought) with their renovation costs.
 Two of them were bought in installments: an entrada and monthly prestações, the ones already due are paid.
+Each house has the areas that needed renovation, and most costs are linked to one of them.
 
 Dates are relative to today, so the data always looks recent. Only used by `python local/server.py`
 (and `python dev.py serve`); the tests start from an empty database."""
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from houses_core.domain.models import Expense, House, Installment, add_months, new_id
+from houses_core.domain.models import Area, Expense, House, Installment, add_months, new_id
 from houses_core.ports import Dependencies
 
 R = 100     # R$ 1,00 in cents
@@ -53,6 +54,28 @@ HOUSES = [  # name, address, bought N days ago, price, purchase costs, status, n
 ]
 
 
+# house name: {area: [descriptions of the costs linked to it]}; a cost not listed has no area
+AREAS = {
+    "Casa da Rua das Flores": {
+        "Pisos": ["Pisos porcelanato 80x80", "Assentamento de piso e revestimentos"],
+        "Banheiros": ["Louças e metais dos banheiros"],
+        "Elétrica": ["Instalação elétrica nova"],
+        "Pintura": ["Pintura interna e externa"],
+    },
+    "Apartamento Centro 302": {
+        "Cozinha": ["Remoção de revestimentos da cozinha", "Revestimentos cozinha e área de serviço",
+                    "Bancada de granito", "Mão de obra cozinha"],
+        "Pintura": ["Tinta acrílica e massa corrida", "Pintura completa"],
+    },
+    "Sobrado Vila Nova": {
+        "Telhado": ["Retirada do telhado antigo", "Madeiramento e telhas", "Montagem do telhado novo"],
+        "Hidráulica": ["Tubos e conexões hidráulicas", "Encanador: troca da rede hidráulica"],
+        "Banheiros": [],
+        "Cozinha": [],
+    },
+    "Casa Jardim Europa": {"Cozinha": [], "Banheiros": [], "Fachada": []},
+}
+
 TARGET_PROFIT = {"Casa da Rua das Flores": 25, "Apartamento Centro 302": 20}   # % wanted; the others, 30
 
 PLANS = {  # house name: entrada, number of monthly installments, each one's amount
@@ -65,8 +88,11 @@ def seed(deps: Dependencies, owner: str, today: date) -> None:
     for name, address, days_ago, price, costs, status, notes, expenses in HOUSES:
         bought = (today - timedelta(days=days_ago)).isoformat()
         down_payment, count, amount = PLANS.get(name, (0, 0, 0))
+        areas = {area: Area(new_id(), area) for area in AREAS.get(name, {})}
+        area_of = {description: areas[area].id for area, descriptions in AREAS.get(name, {}).items()
+                   for description in descriptions}
         house = House(new_id(), name, address, bought, price, costs, status, notes, down_payment,
-                      "installments" if count else "cash", TARGET_PROFIT.get(name, 30))
+                      "installments" if count else "cash", TARGET_PROFIT.get(name, 30), tuple(areas.values()))
         deps.repo.save_house(owner, house)
         first_due = add_months(bought, 1)
         installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "")
@@ -74,4 +100,5 @@ def seed(deps: Dependencies, owner: str, today: date) -> None:
         deps.repo.save_installments(owner, installments)
         for ago, category, description, supplier, amount in expenses:
             deps.repo.save_expense(owner, Expense(new_id(), house.id, (today - timedelta(days=ago)).isoformat(),
-                                                  category, description, amount, supplier))
+                                                  category, description, amount, supplier,
+                                                  area_of.get(description, "")))

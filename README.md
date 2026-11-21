@@ -2,9 +2,10 @@
 
 Manages houses bought to be renovated, serverless on AWS. For each house: what it cost to buy
 (price + ITBI, deed, broker...), how it was paid (cash, or entrada + monthly installments, each one
-marked when paid) and every renovation cost (material, labor, services, project, other), with the
-totals per house, per category and for all houses together. Given the profit wanted (%), it tells
-for how much to sell each house today, as it is.
+marked when paid) and every renovation cost (material, labor, services, project, other), each one
+linked to the area of the house it went to (kitchen, roof...), with the totals per house, per
+category, per area (which part costs the most) and for all houses together. Given the profit wanted
+(%), it tells for how much to sell each house today, as it is.
 
 The app's screens are in Brazilian Portuguese; code and docs are in English.
 
@@ -78,7 +79,7 @@ everything else lives in a shared core, copied into every Lambda's zip.
 ```
 backend/
   core/houses_core/
-    domain/          entities (House, Expense, Installment) and validation, pure Python
+    domain/          entities (House and its Areas, Expense, Installment) and validation, pure Python
     ports.py         what use cases need: the Repository
     application.py   rules shared by several use cases (lookups, limits, totals)
     adapters/        DynamoDB, API Gateway input (login, ids, errors)
@@ -116,6 +117,9 @@ Rules worth knowing:
   the price) + installments, registered with the house and each one paid when it has a `paid_date`.
   Paid so far = entrada + the paid installments. A cash house has no entrada and takes no installment.
 - Suggested sale price today = total invested (purchase + renovation) + `target_profit_percent` of it.
+- A house lists the areas that need renovation (`areas`: the names; the API gives each an id, kept
+  while the name is the same, ignoring case). A cost may be linked to one (`area_id`). An area with
+  costs can't be removed until they move to another area or to none.
 - Deleting a house deletes its costs and installments first, so no orphan is left behind.
 - DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>`, `EXP#<house id>#<id>` or
   `INST#<house id>#<id>`. A payment plan is written with `BatchWriteItem`, 25 items per call.

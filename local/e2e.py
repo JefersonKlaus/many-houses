@@ -95,6 +95,11 @@ def run():
         expect(page.locator("#h-first")).to_have_value("2026-02-15")                   # a month after the purchase
         expect(page.locator("#h-summary")).to_contain_text("3 × R$ 80.000,00 = R$ 300.000,00")
         page.fill("#h-profit", "30")
+        page.locator("#h-areas .chip", has_text="Cozinha").click()                      # areas: two suggestions
+        page.locator("#h-areas .chip", has_text="Banheiros").click()
+        page.fill("#h-other-area", "Edícula")                                          # and one typed in
+        page.keyboard.press("Enter")
+        expect(page.locator("#h-areas .chip:has(input:checked)")).to_have_count(3)
         calls = []
         page.on("request", lambda r: "/houses" in r.url and calls.append(f"{r.method} {r.url.split('/houses', 1)[1]}"))
         page.click("dialog >> text=Salvar")
@@ -121,19 +126,26 @@ def run():
         expect(page.locator("#installments tbody tr")).to_have_count(2)
         expect(page.locator("#installments .totals")).to_contain_text("1 de 2")
 
-        # two renovation costs, then one is changed and the other deleted
-        for description, category, amount in (("Cimento e areia", "material", "1.500,50"),
-                                              ("Pedreiro", "labor", "4.000")):
+        # two renovation costs, each in an area, then one is changed and the other deleted
+        expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Cozinha, Banheiros, Edícula")
+        for description, category, area, amount in (("Cimento e areia", "material", "Cozinha", "1.500,50"),
+                                                    ("Pedreiro", "labor", "Banheiros", "4.000")):
             page.click("text=Novo custo")
             page.fill("#e-description", description)
             page.select_option("#e-category", category)
+            page.select_option("#e-area", label=area)
             page.fill("#e-amount", amount)
             page.click("dialog >> text=Salvar")
             expect(page.locator("#expenses tbody")).to_contain_text(description)
         expect(page.locator("#house-totals")).to_contain_text("5.500,50")       # renovation
         expect(page.locator("#house-totals")).to_contain_text("323.500,50")     # total
         expect(page.locator("#sale .sale-price")).to_have_text("R$ 420.550,65")       # goes up with the renovation
-        expect(page.locator(".bars")).to_contain_text("Mão de obra")
+        expect(page.locator(".bars").last).to_contain_text("Mão de obra")
+        expect(page.locator("#areas li").first).to_contain_text("Banheiros")           # the most expensive first
+        expect(page.locator("#areas li").first).to_contain_text("mais cara")
+        expect(page.locator("#areas li").first).to_contain_text("4.000,00")
+        expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Edícula")
+        expect(page.locator("#expenses tbody tr", has_text="Pedreiro")).to_contain_text("Banheiros")
 
         row = page.locator("#expenses tbody tr", has_text="Pedreiro")
         row.locator(".kebab").click()
@@ -154,6 +166,12 @@ def run():
         expect(page.locator("#h-down")).to_have_value("60.000,00")
         expect(page.locator("#h-profit")).to_have_value("30")
         expect(page.locator("#h-count")).to_have_count(0)                              # the plan: on the house page
+        expect(page.locator("#h-areas .chip:has(input:checked)")).to_have_text(["Cozinha", "Banheiros", "Edícula"])
+        page.locator("#h-areas .chip", has_text="Banheiros").click()                    # an area with a cost...
+        page.click("dialog >> text=Salvar")
+        expect(page.locator(".toast.error").last).to_contain_text("tem custos lançados")   # ...is not removed
+        errors[:] = [e for e in errors if "status of 400" not in e]                  # that 400 was on purpose
+        page.locator("#h-areas .chip", has_text="Banheiros").click()
         page.select_option("#h-status", "ready")
         page.click("dialog >> text=Salvar")
         expect(page.locator("h1 .badge")).to_have_text("Pronta")
@@ -184,7 +202,10 @@ def run_without_login():
         expect(page.locator("#local-mode")).to_have_count(1)
         expect(page.locator(".list-item")).to_have_count(4)
         page.locator(".list-item", has_text="Sobrado Vila Nova").click()
-        expect(page.locator(".bars li")).to_have_count(4)
+        expect(page.locator(".bars").last.locator("li")).to_have_count(4)               # categories
+        expect(page.locator("#areas li")).to_have_count(3)                              # Telhado, Hidráulica, Sem área
+        expect(page.locator("#areas li").first).to_contain_text("Telhado")
+        expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Banheiros, Cozinha")
         expect(page.locator("#expenses tbody tr")).to_have_count(7)
         expect(page.locator("#installments tbody tr")).to_have_count(12)               # a page of a long plan
         expect(page.locator("#installments .pager-page")).to_contain_text("de 10")

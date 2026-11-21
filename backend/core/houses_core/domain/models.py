@@ -21,6 +21,8 @@ MAX_INSTALLMENTS_AT_ONCE = 600              # 50 years of monthly installments
 HOUSE_STATUSES = ("renovating", "ready", "sold")                         # em reforma, pronta, vendida
 PAYMENT_TYPES = ("cash", "installments")                                  # à vista, parcelado
 MAX_PROFIT_PERCENT = 1000
+MAX_AREAS = 30
+MAX_AREA_NAME = 40
 EXPENSE_CATEGORIES = ("material", "labor", "services", "project", "other")  # material, mão de obra, serviços,
                                                                           # projeto e documentação, outros
 
@@ -32,7 +34,7 @@ FIELD_LABELS = {
     "description": "descrição", "supplier": "fornecedor", "amount_cents": "valor",
     "down_payment_cents": "entrada", "due_date": "vencimento", "paid_date": "data do pagamento",
     "first_due_date": "primeiro vencimento", "count": "quantidade", "payment_type": "forma de pagamento",
-    "target_profit_percent": "lucro desejado",
+    "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área",
 }
 
 
@@ -101,6 +103,37 @@ def _choice(payload: Mapping[str, Any], field: str, options: tuple[str, ...], de
 
 
 @dataclass(frozen=True)
+class Area:
+    """A part of the house that needs renovation: "Cozinha", "Telhado", "Banheiro social"..."""
+    id: str
+    name: str
+
+
+def _areas(payload: Mapping[str, Any], previous: tuple[Area, ...]) -> tuple[Area, ...]:
+    """The area names typed in, in order. A name that already existed (same name, ignoring case)
+    keeps its id, so the costs linked to it stay linked."""
+    names = payload.get("areas")
+    if names is None:
+        return ()
+    if not isinstance(names, list) or len(names) > MAX_AREAS:
+        raise ValidationError(f"áreas: no máximo {MAX_AREAS}")
+    known = {a.name.casefold(): a for a in previous}
+    areas, seen = [], set()
+    for name in names:
+        if not isinstance(name, str) or not name.strip():
+            raise ValidationError("áreas: o nome da área não pode ficar vazio")
+        cleaned = " ".join(name.split())
+        if len(cleaned) > MAX_AREA_NAME:
+            raise ValidationError(f"áreas: no máximo {MAX_AREA_NAME} caracteres no nome")
+        key = cleaned.casefold()
+        if key in seen:
+            raise ValidationError(f"áreas: \"{cleaned}\" aparece duas vezes")
+        seen.add(key)
+        areas.append(Area(known[key].id if key in known else new_id(), cleaned))
+    return tuple(areas)
+
+
+@dataclass(frozen=True)
 class House:
     """A house that was bought to be renovated. The purchase is its price plus what it cost to buy it
     (ITBI, deed, registry, broker...); the renovation costs are Expenses. It is bought "cash" (à vista)
@@ -117,9 +150,11 @@ class House:
     down_payment_cents: int = 0     # entrada: always 0 when bought cash
     payment_type: str = "cash"
     target_profit_percent: float = 0
+    areas: tuple[Area, ...] = ()    # the parts that need renovation; each cost may be linked to one
 
     @classmethod
-    def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None) -> "House":
+    def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None,
+                   previous: Optional["House"] = None) -> "House":
         price = _cents(payload, "purchase_price_cents")
         payment_type = _choice(payload, "payment_type", PAYMENT_TYPES, "cash")
         down_payment = _cents(payload, "down_payment_cents", required=False) if payment_type == "installments" else 0
@@ -130,7 +165,7 @@ class House:
                    price, _cents(payload, "purchase_costs_cents", required=False),
                    _choice(payload, "status", HOUSE_STATUSES, "renovating"),
                    _text(payload, "notes", 2000, required=False), down_payment, payment_type,
-                   _percent(payload, "target_profit_percent"))
+                   _percent(payload, "target_profit_percent"), _areas(payload, previous.areas if previous else ()))
 
     @property
     def purchase_total_cents(self) -> int:
@@ -146,7 +181,8 @@ class House:
                    d.get("down_payment_cents", 0),
                    # saved before the field existed: an entrada meant it was bought in installments
                    d.get("payment_type", "installments" if d.get("down_payment_cents") else "cash"),
-                   d.get("target_profit_percent", 0))
+                   d.get("target_profit_percent", 0),
+                   tuple(Area(a["id"], a["name"]) for a in d.get("areas", ())))
 
 
 @dataclass(frozen=True)
@@ -159,13 +195,17 @@ class Expense:
     description: str
     amount_cents: int
     supplier: str = ""
+    area_id: str = ""               # one of the house's areas; "" = not linked to an area
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], house_id: str, id: Optional[str] = None) -> "Expense":
+        area_id = payload.get("area_id") or ""
+        if not isinstance(area_id, str) or (area_id and not ITEM_ID_RE.match(area_id)):
+            raise ValidationError("área: escolha uma das áreas da casa")
         return cls(id or new_id(), house_id, parse_date(payload.get("date")),
                    _choice(payload, "category", EXPENSE_CATEGORIES),
                    _text(payload, "description", 120), _cents(payload, "amount_cents", minimum=1),
-                   _text(payload, "supplier", 80, required=False))
+                   _text(payload, "supplier", 80, required=False), area_id)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -173,7 +213,7 @@ class Expense:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "Expense":
         return cls(d["id"], d["house_id"], d["date"], d["category"], d["description"], d["amount_cents"],
-                   d.get("supplier", ""))
+                   d.get("supplier", ""), d.get("area_id", ""))
 
 
 @dataclass(frozen=True)

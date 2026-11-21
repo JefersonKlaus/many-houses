@@ -13,6 +13,10 @@ const CATEGORIES = { material: "Material", labor: "Mão de obra", services: "Ser
 
 const tile = (label, value, note) => h("div", {}, h("span", {}, label), h("strong", {}, value),
   note && h("small", { className: "muted" }, note));
+// Offered as ready-made choices in the house form; any other area can be typed in.
+const AREA_SUGGESTIONS = ["Cozinha", "Banheiros", "Quartos", "Sala", "Área de serviço", "Telhado", "Fachada",
+  "Quintal", "Elétrica", "Hidráulica", "Pisos", "Pintura"];
+
 const INSTALLMENTS_PAGE = 12;                   // a year of prestações per page
 
 /** "2026-01-31" -> "2026-02-28": a month later, the same day or the month's last day (like the backend). */
@@ -86,6 +90,7 @@ export async function mount(container) {
       saleCard(house, totals),
       purchaseCard(house, totals.payment),
       house.payment_type === "installments" && installmentsCard(house, installments, totals.payment),
+      areasCard(house, totals),
       categoriesCard(totals),
       expensesCard(house, expenses, totals));
   }
@@ -189,6 +194,32 @@ export async function mount(container) {
     return card;
   }
 
+  /** Which part of the house costs the most: one bar per area, the most expensive first, as a share
+   *  of the renovation. Areas still without costs and the costs with no area are listed too. */
+  function areasCard(house, totals) {
+    const card = h("div", { className: "card", id: "areas" }, h("h2", {}, "Reforma por área"));
+    if (house.areas.length === 0) {
+      card.append(h("p", { className: "muted" },
+        "Marque em “Editar casa” as áreas que precisam de reforma (cozinha, telhado…) e vincule cada custo a uma delas."));
+      return card;
+    }
+    const rows = totals.by_area.filter((a) => a.cents > 0).sort((a, b) => b.cents - a.cents);
+    if (totals.no_area_cents > 0) rows.push({ id: "", name: "Sem área", cents: totals.no_area_cents, none: true });
+    const waiting = totals.by_area.filter((a) => a.cents === 0).map((a) => a.name);
+    if (rows.length === 0) card.append(h("p", { className: "muted" }, "Nenhum custo lançado ainda."));
+    else card.append(h("ul", { className: "bars" }, rows.map((a, index) => {
+      const bar = h("span", { className: `bar-fill ${a.none ? "area-none" : index === 0 ? "area-top" : "area"}` });
+      bar.style.width = `${((100 * a.cents) / totals.renovation_cents).toFixed(1)}%`;   // CSSOM: allowed by the CSP
+      return h("li", {}, h("span", { className: "bar-label" }, a.name,
+        index === 0 && !a.none && rows.length > 1 && h("small", { className: "top-tag" }, " mais cara")),
+      h("span", { className: "bar" }, bar),
+      h("span", { className: "bar-value" }, formatMoney(a.cents),
+        h("small", { className: "muted" }, ` ${percent(a.cents, totals.renovation_cents)}`)));
+    })));
+    if (waiting.length > 0) card.append(h("p", { className: "muted" }, `Ainda sem custos: ${waiting.join(", ")}.`));
+    return card;
+  }
+
   /** Where the renovation money went: one bar per category, as a share of the renovation. */
   function categoriesCard(totals) {
     const used = Object.keys(CATEGORIES).filter((c) => totals.by_category[c] > 0);
@@ -202,6 +233,8 @@ export async function mount(container) {
               h("small", { className: "muted" }, ` ${percent(totals.by_category[c], totals.renovation_cents)}`)));
         })));
   }
+
+  const areaName = (house, id) => house.areas.find((a) => a.id === id)?.name || "";
 
   function expensesCard(house, expenses, totals) {
     const add = h("button", { className: "primary small", onclick: () => expenseDialog(house, null) }, "Novo custo");
@@ -218,7 +251,8 @@ export async function mount(container) {
           h("tbody", {}, expenses.map((e) => h("tr", {},
             h("td", {}, formatDate(e.date)),
             h("td", {}, e.description, e.supplier && h("div", { className: "muted" }, e.supplier)),
-            h("td", {}, CATEGORIES[e.category] || e.category),
+            h("td", {}, CATEGORIES[e.category] || e.category,
+              e.area_id && h("div", { className: "muted" }, areaName(house, e.area_id))),
             h("td", { className: "num" }, formatMoney(e.amount_cents)),
             h("td", {}, actionsMenu(e.description, [
               { text: "Editar", onclick: () => expenseDialog(house, e) },
@@ -228,8 +262,9 @@ export async function mount(container) {
   }
 
   // ------------------------------------------------------------------ forms
+  /** `options`: {value: text}, or [[value, text], ...] when the order must be kept (ids that look like numbers). */
   const select = (id, options, current) => h("select", { id },
-    Object.entries(options).map(([value, text]) => h("option", { value, selected: value === current }, text)));
+    (Array.isArray(options) ? options : Object.entries(options)).map(([value, text]) => h("option", { value, selected: value === current }, text)));
   const field = (id, label, input) => [h("label", { htmlFor: id }, label), input];
 
   /** A money field: "1.234,56". Returns its cents, or throws with the field's name. */
@@ -252,6 +287,28 @@ export async function mount(container) {
     const notes = h("textarea", { id: "h-notes", maxLength: 2000, rows: 3, value: house?.notes || "" });
     const profit = h("input", { id: "h-profit", inputMode: "decimal", placeholder: "Ex.: 30",
       value: house?.target_profit_percent ? percentText(house.target_profit_percent) : "" });
+
+    // the areas that need renovation: the house's own first (checked), then the suggestions not used yet
+    const chips = h("div", { className: "chips", id: "h-areas" });
+    const addChip = (name, checked) => chips.append(h("label", { className: "chip" },
+      h("input", { type: "checkbox", value: name, checked }), name));
+    const has = (name) => [...chips.querySelectorAll("input")].some((i) => i.value.toLowerCase() === name.toLowerCase());
+    for (const area of house?.areas || []) addChip(area.name, true);
+    for (const name of AREA_SUGGESTIONS) if (!has(name)) addChip(name, false);
+    const otherArea = h("input", { id: "h-other-area", maxLength: 40, placeholder: "Outra área (ex.: Edícula)" });
+    const addOther = () => {
+      const name = otherArea.value.trim().replace(/\s+/g, " ");
+      if (!name) return;
+      const existing = [...chips.querySelectorAll("input")].find((i) => i.value.toLowerCase() === name.toLowerCase());
+      if (existing) existing.checked = true; else addChip(name, true);
+      otherArea.value = "";
+      otherArea.focus();
+    };
+    otherArea.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addOther(); } });
+    const areas = h("div", {},
+      h("label", { htmlFor: "h-other-area" }, "Áreas que precisam de reforma"), chips,
+      h("div", { className: "inline-add" }, otherArea,
+        h("button", { type: "button", className: "secondary small", onclick: addOther }, "Adicionar")));
 
     // how it was paid: à vista, or parcelado with the entrada and (when registering) the installments
     const paymentType = house?.payment_type || "cash";
@@ -298,6 +355,7 @@ export async function mount(container) {
       h("fieldset", { className: "choices" }, h("legend", {}, "Forma de pagamento"),
         radio("cash", "À vista"), radio("installments", "Parcelado")),
       installments,
+      areas,
       field("h-profit", "Lucro desejado (%)", profit),
       h("p", { className: "muted hint" }, "Sobre o total investido (compra + reforma): a página da casa mostra por quanto vender hoje."),
       field("h-notes", "Observações", notes),
@@ -310,7 +368,8 @@ export async function mount(container) {
         const body = { name: name.value, address: address.value, purchase_date: date.value, status: status.value,
           notes: notes.value, purchase_price_cents: cents(price, "Valor do imóvel"),
           purchase_costs_cents: cents(costs, "Custos da compra", false),
-          target_profit_percent: target, payment_type: chosen() };
+          target_profit_percent: target, payment_type: chosen(),
+          areas: [...chips.querySelectorAll("input:checked")].map((i) => i.value) };
         if (body.payment_type === "installments") {
           body.down_payment_cents = cents(down, "Entrada", false);
           if (!house) {
@@ -336,17 +395,20 @@ export async function mount(container) {
     const supplier = h("input", { id: "e-supplier", maxLength: 80, value: expense?.supplier || "" });
     const amount = h("input", { id: "e-amount", inputMode: "decimal", placeholder: "0,00",
       value: expense ? centsToText(expense.amount_cents) : "" });
+    const area = select("e-area", [["", "Sem área"], ...house.areas.map((a) => [a.id, a.name])], expense?.area_id || "");
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(expense ? "Editar custo" : `Novo custo: ${house.name}`,
       field("e-description", "Descrição", description),
       h("div", { className: "two-columns" },
         h("div", {}, field("e-date", "Data", date)), h("div", {}, field("e-category", "Categoria", category)),
         h("div", {}, field("e-amount", "Valor (R$)", amount)), h("div", {}, field("e-supplier", "Fornecedor (opcional)", supplier))),
+      house.areas.length > 0 ? field("e-area", "Área da casa", area)
+        : h("p", { className: "muted hint" }, "Para vincular o custo a uma área (cozinha, telhado…), marque as áreas em “Editar casa”."),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
         const body = { date: date.value, category: category.value, description: description.value,
-          supplier: supplier.value, amount_cents: cents(amount, "Valor") };
+          supplier: supplier.value, amount_cents: cents(amount, "Valor"), area_id: area.value };
         const view = expense ? await api("PUT", `/houses/${house.id}/expenses/${expense.id}`, body)
           : await api("POST", `/houses/${house.id}/expenses`, body);
         notify("Custo salvo.");

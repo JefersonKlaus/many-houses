@@ -115,3 +115,29 @@ def test_installment_from_input_paid_or_not():
         Installment.from_input({**base, "paid_date": "ontem"}, "abcd1234")
     with pytest.raises(ValidationError, match="vencimento"):
         Installment.from_input({**base, "due_date": ""}, "abcd1234")
+
+
+def test_house_areas_keep_their_ids_by_name():
+    house = House.from_input(house_input(areas=["  Cozinha ", "Banheiro   social"]))
+    assert [a.name for a in house.areas] == ["Cozinha", "Banheiro social"]
+    assert len({a.id for a in house.areas}) == 2 and House.from_dict(house.to_dict()) == house
+    again = House.from_input(house_input(areas=["banheiro social", "Telhado"]), house.id, previous=house)
+    assert again.areas[0].id == house.areas[1].id and again.areas[0].name == "banheiro social"
+    assert again.areas[1].id not in {a.id for a in house.areas}                      # a new area
+    assert House.from_input(house_input()).areas == ()
+
+
+@pytest.mark.parametrize("areas, message", [
+    ("Cozinha", "no máximo"), (["Cozinha", "COZINHA"], "duas vezes"), ([" "], "vazio"), ([7], "vazio"),
+    (["x" * 41], "caracteres"), ([f"Área {n}" for n in range(31)], "no máximo 30"),
+])
+def test_invalid_areas(areas, message):
+    with pytest.raises(ValidationError, match=message):
+        House.from_input(house_input(areas=areas))
+
+
+def test_expense_area_id():
+    assert Expense.from_input(expense_input(), "abcd1234").area_id == ""
+    assert Expense.from_input(expense_input(area_id="1234abcd"), "abcd1234").area_id == "1234abcd"
+    with pytest.raises(ValidationError, match="área"):
+        Expense.from_input(expense_input(area_id="cozinha"), "abcd1234")

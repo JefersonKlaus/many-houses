@@ -98,6 +98,19 @@ fieldset.choices legend { padding: 0; margin-bottom: 4px; font-size: .9rem; colo
 .choice:has(input:focus-visible) { outline: 3px solid var(--brand); outline-offset: 2px; }
 .installments-fields { margin-top: 4px; padding: 0 12px 10px; border: 1px solid var(--border); border-top: 0;
   border-radius: 0 0 8px 8px; }
+/* the areas of a house: checkable chips, and one more typed in */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border: 1px solid var(--border);
+  border-radius: 999px; color: var(--text); font-size: .9rem; cursor: pointer; }
+.chip input { width: auto; margin: 0; accent-color: var(--brand); }
+.chip:has(input:checked) { border-color: var(--brand); background: var(--brand-light); color: var(--brand); font-weight: 600; }
+.chip:has(input:focus-visible) { outline: 3px solid var(--brand); outline-offset: 2px; }
+.inline-add { display: flex; gap: 8px; margin-top: 8px; }
+.inline-add input { flex: 1; }
+.bar-fill.area { background: var(--brand); opacity: .55; }
+.bar-fill.area-top { background: var(--danger); }
+.bar-fill.area-none { background: var(--muted); opacity: .5; }
+.top-tag { color: var(--danger); font-weight: 600; }
 /* the suggested sale price */
 .card.sale { border-color: var(--brand); background: var(--brand-light); }
 .sale-label { display: block; color: var(--brand); font-weight: 600; }

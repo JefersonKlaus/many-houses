@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from houses_core.application import check_expense_limit, get_house, house_view
+from houses_core.application import check_expense_area, check_expense_limit, get_house, house_view
 from houses_core.domain.models import Expense
 from houses_core.ports import Dependencies
 
@@ -13,6 +13,7 @@ from houses_core.ports import Dependencies
 def create_expense(deps: Dependencies, owner: str, house_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     house = get_house(deps.repo, owner, house_id)
     expense = Expense.from_input(payload, house.id)
+    check_expense_area(house, expense)
     check_expense_limit(deps.repo, owner, house.id)
     deps.repo.save_expense(owner, expense)
     return house_view(deps.repo, owner, house)

@@ -252,3 +252,46 @@ def test_suggested_sale_price_follows_what_was_invested(deps):
     assert list_houses(deps, OWNER)[0]["totals"]["sale"]["suggested_price_cents"] == 43_940_000
     view = update_house(deps, OWNER, hid, house_input(target_profit_percent=0))
     assert view["totals"]["sale"]["suggested_price_cents"] == view["totals"]["total_cents"]
+
+
+def test_costs_by_area(deps):
+    view = create_house(deps, OWNER, house_input(areas=["Cozinha", "Telhado", "Banheiro"]))
+    hid = view["house"]["id"]
+    kitchen, roof, bathroom = (a["id"] for a in view["house"]["areas"])
+    create_expense(deps, OWNER, hid, expense_input(area_id=kitchen, amount_cents=700))
+    create_expense(deps, OWNER, hid, expense_input(area_id=kitchen, amount_cents=300))
+    create_expense(deps, OWNER, hid, expense_input(area_id=roof, amount_cents=5000))
+    view = create_expense(deps, OWNER, hid, expense_input(amount_cents=40))           # no area
+    assert view["totals"]["by_area"] == [
+        {"id": kitchen, "name": "Cozinha", "cents": 1000, "count": 2},
+        {"id": roof, "name": "Telhado", "cents": 5000, "count": 1},
+        {"id": bathroom, "name": "Banheiro", "cents": 0, "count": 0}]
+    assert view["totals"]["no_area_cents"] == 40
+
+
+def test_a_cost_only_goes_to_an_area_of_its_house(deps):
+    view = create_house(deps, OWNER, house_input(areas=["Cozinha"]))
+    hid = view["house"]["id"]
+    other = create_house(deps, OWNER, house_input(name="Outra", areas=["Sala"]))["house"]["areas"][0]["id"]
+    with pytest.raises(ValidationError, match="área"):
+        create_expense(deps, OWNER, hid, expense_input(area_id=other))
+    eid = new_expense(deps, hid)
+    with pytest.raises(ValidationError, match="área"):
+        update_expense(deps, OWNER, hid, eid, expense_input(area_id=other))
+    kitchen = view["house"]["areas"][0]["id"]
+    view = update_expense(deps, OWNER, hid, eid, expense_input(area_id=kitchen))
+    assert view["expenses"][0]["area_id"] == kitchen
+
+
+def test_an_area_with_costs_is_not_removed(deps):
+    view = create_house(deps, OWNER, house_input(areas=["Cozinha", "Sala"]))
+    hid = view["house"]["id"]
+    kitchen = view["house"]["areas"][0]["id"]
+    eid = new_expense(deps, hid, area_id=kitchen)
+    with pytest.raises(ValidationError, match="Cozinha.*tem custos"):
+        update_house(deps, OWNER, hid, house_input(areas=["Sala"]))
+    view = update_house(deps, OWNER, hid, house_input(areas=["COZINHA", "Sala", "Quintal"]))   # renamed: same area
+    assert view["house"]["areas"][0]["id"] == kitchen and view["totals"]["by_area"][0]["count"] == 1
+    update_expense(deps, OWNER, hid, eid, expense_input())                              # the cost leaves the area
+    view = update_house(deps, OWNER, hid, house_input(areas=["Sala"]))
+    assert [a["name"] for a in view["house"]["areas"]] == ["Sala"]

@@ -45,6 +45,23 @@ def check_expense_limit(repo: Repository, owner: str, house_id: str) -> None:
         raise ValidationError(f"limite de {MAX_EXPENSES_PER_HOUSE} custos nesta casa atingido")
 
 
+def check_expense_area(house: House, expense: Expense) -> None:
+    if expense.area_id and expense.area_id not in {a.id for a in house.areas}:
+        raise ValidationError("área: escolha uma das áreas da casa")
+
+
+def check_removed_areas_have_no_costs(repo: Repository, owner: str, before: House, after: House) -> None:
+    """An area can only leave the house when no cost is linked to it (they would lose their area)."""
+    kept = {a.id for a in after.areas}
+    removed = {a.id: a.name for a in before.areas if a.id not in kept}
+    if not removed:
+        return
+    used = {e.area_id for e in repo.list_expenses(owner, before.id)}
+    for area_id, name in removed.items():
+        if area_id in used:
+            raise ValidationError(f"área \"{name}\" tem custos lançados: mude esses custos de área antes de removê-la")
+
+
 def check_bought_in_installments(house: House) -> None:
     if house.payment_type != "installments":
         raise ValidationError("esta casa foi comprada à vista: mude a forma de pagamento para parcelado")
@@ -70,17 +87,25 @@ def sorted_installments(installments: Iterable[Installment]) -> list[Installment
 
 
 def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Installment] = ()) -> dict[str, Any]:
-    """What a house cost: the purchase (price + its costs), the renovation (by category) and the sum.
-    `payment`: how the price is being paid, the entrada plus the installments paid and still open."""
+    """What a house cost: the purchase (price + its costs), the renovation (by category and by area)
+    and the sum. `payment`: how the price is being paid, the entrada plus the installments paid and open.
+    `by_area`: each of the house's areas, in its order, with its costs; `no_area_cents`: costs with no area."""
     by_category = dict.fromkeys(EXPENSE_CATEGORIES, 0)
-    count = 0
+    by_area = {a.id: {"id": a.id, "name": a.name, "cents": 0, "count": 0} for a in house.areas}
+    no_area = count = 0
     for e in expenses:
         by_category[e.category] += e.amount_cents
         count += 1
+        if e.area_id in by_area:
+            by_area[e.area_id]["cents"] += e.amount_cents
+            by_area[e.area_id]["count"] += 1
+        else:
+            no_area += e.amount_cents
     renovation = sum(by_category.values())
     return {"purchase_cents": house.purchase_total_cents, "renovation_cents": renovation,
             "total_cents": house.purchase_total_cents + renovation, "expense_count": count,
-            "by_category": by_category, "payment": payment(house, installments),
+            "by_category": by_category, "by_area": list(by_area.values()), "no_area_cents": no_area,
+            "payment": payment(house, installments),
             "sale": sale(house, house.purchase_total_cents + renovation)}
 
 

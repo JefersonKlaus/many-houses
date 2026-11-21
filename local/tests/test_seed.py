@@ -16,8 +16,11 @@ def test_demo_data_is_valid_and_looks_used():
     financed = [h["totals"]["payment"] for h in houses if h["totals"]["payment"]["installments_count"]]
     assert len(financed) == 2 and all(0 < p["paid_count"] < p["installments_count"] for p in financed)
     # everything in it would also pass the API's validation
+    assert all(h["areas"] for h in houses)
+    assert any(a["cents"] > 0 for h in houses for a in h["totals"]["by_area"])
     for house in deps.repo.list_houses("me"):
-        assert House.from_input(house.to_dict(), house.id) == house
+        typed = {**house.to_dict(), "areas": [a.name for a in house.areas]}       # the form sends the names
+        assert House.from_input(typed, house.id, previous=house) == house
     for expense in deps.repo.list_expenses("me"):
         assert Expense.from_input(expense.to_dict(), expense.house_id, expense.id) == expense
     for inst in deps.repo.list_installments("me"):
