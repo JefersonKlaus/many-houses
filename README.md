@@ -142,7 +142,8 @@ Rules worth knowing:
   `INST#<house id>#<id>` or `LINK#<house id>` (a partner's link to the owner's house, which stays in
   the owner's partition); `PK = PHONE#<phone>`, `SK = INVITE#<id>` for the invites waiting. A payment
   plan is written with `BatchWriteItem`, 25 items per call.
-- Every list and table shows 10 rows a page. Sold houses are hidden from the list until asked for.
+- Every list and table shows 10 rows a page. Sold houses are hidden from the list until asked for,
+  and always come last (the rest by name, then the sold ones by name).
 
 ### Local
 

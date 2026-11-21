@@ -56,6 +56,12 @@ def test_house_with_its_costs(deps):
     assert found["totals"]["by_category"]["labor"] == 500
 
 
+def test_sold_houses_are_always_last(deps):
+    for name, status in (("Azul", "sold"), ("Casa Nova", "renovating"), ("Amarela", "ready"), ("Branca", "sold")):
+        create_house(deps, OWNER, house_input(name=name, status=status))
+    assert [h["name"] for h in list_houses(deps, OWNER)] == ["Amarela", "Casa Nova", "Azul", "Branca"]
+
+
 def test_list_houses_by_name_with_their_totals(deps):
     b = new_house(deps, name="Bela Vista")
     a = new_house(deps, name="apartamento 12", purchase_costs_cents=0)

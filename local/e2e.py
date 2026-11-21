@@ -300,6 +300,7 @@ def run_without_login():
         expect(page.locator("#toggle-sold")).to_have_text("Mostrar vendidas (1)")
         page.click("#toggle-sold")
         expect(page.locator(".list-item")).to_have_count(4)
+        expect(page.locator(".list-item").last).to_contain_text("Casa da Rua das Flores")    # the sold one: last
         page.click("#toggle-sold")
         expect(page.locator(".list-item")).to_have_count(3)
         page.locator(".list-item", has_text="Sobrado Vila Nova").click()

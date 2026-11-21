@@ -110,7 +110,8 @@ def check_installment_limit(repo: Repository, owner: str, house_id: str, adding:
 
 
 def sorted_houses(houses: Iterable[House]) -> list[House]:
-    return sorted(houses, key=lambda h: (h.name.lower(), h.id))
+    """By name, the sold ones always last."""
+    return sorted(houses, key=lambda h: (h.status == "sold", h.name.lower(), h.id))
 
 
 def sorted_expenses(expenses: Iterable[Expense]) -> list[Expense]:
