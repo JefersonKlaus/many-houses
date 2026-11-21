@@ -7,8 +7,6 @@ JS syntax check). Everything is installed inside .venv/, nothing globally.
     python dev.py test      backend tests and the JS syntax check (quick)
     python dev.py e2e       the browser test (a real Chromium)
     python dev.py all       test + e2e: what CI runs, except Terraform
-
-In VS Code / GitHub Codespaces, "Reopen in Container" (.devcontainer/) does the setup by itself.
 """
 from __future__ import annotations
 
@@ -24,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 VENV_PYTHON = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-NODE_HINT = "Node 22 is needed for the JS syntax check: https://nodejs.org (or use the dev container)."
+NODE_HINT = "Node 22 is needed for the JS syntax check: https://nodejs.org."
 
 
 def python() -> str:

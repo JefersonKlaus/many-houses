@@ -8,8 +8,7 @@ The app's screens are in Brazilian Portuguese; code and docs are in English.
 
 ## Run it locally
 
-Needs Python 3.12+ (and Node 22 for the JS syntax check). Or open the folder in the dev container /
-Codespaces, which installs everything.
+Needs Python 3.12+ (and Node 22 for the JS syntax check).
 
 ```bash
 python dev.py setup             # once: creates .venv/ and downloads Chromium
