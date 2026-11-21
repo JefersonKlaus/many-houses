@@ -40,6 +40,16 @@ export function toCents(text) {
   return Number(whole) * 100 + Number(cents.padEnd(2, "0"));
 }
 
+/** "30", "12,5" or "12.5" -> 12.5; empty -> 0; null if it is not a percentage. */
+export function toPercent(text) {
+  const cleaned = String(text).trim().replace("%", "").trim().replace(",", ".");
+  if (cleaned === "") return 0;
+  return /^\d{1,4}(\.\d{1,2})?$/.test(cleaned) ? Number(cleaned) : null;
+}
+
+/** 12.5 -> "12,5" */
+export const percentText = (value) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+
 /** "2026-11-20" -> "20/11/2026". */
 export const formatDate = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 

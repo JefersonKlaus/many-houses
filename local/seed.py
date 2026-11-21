@@ -53,6 +53,8 @@ HOUSES = [  # name, address, bought N days ago, price, purchase costs, status, n
 ]
 
 
+TARGET_PROFIT = {"Casa da Rua das Flores": 25, "Apartamento Centro 302": 20}   # % wanted; the others, 30
+
 PLANS = {  # house name: entrada, number of monthly installments, each one's amount
     "Apartamento Centro 302": (90_000 * R, 36, 5_900 * R),
     "Sobrado Vila Nova": (156_000 * R, 120, 3_480 * R),
@@ -63,7 +65,8 @@ def seed(deps: Dependencies, owner: str, today: date) -> None:
     for name, address, days_ago, price, costs, status, notes, expenses in HOUSES:
         bought = (today - timedelta(days=days_ago)).isoformat()
         down_payment, count, amount = PLANS.get(name, (0, 0, 0))
-        house = House(new_id(), name, address, bought, price, costs, status, notes, down_payment)
+        house = House(new_id(), name, address, bought, price, costs, status, notes, down_payment,
+                      "installments" if count else "cash", TARGET_PROFIT.get(name, 30))
         deps.repo.save_house(owner, house)
         first_due = add_months(bought, 1)
         installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "")

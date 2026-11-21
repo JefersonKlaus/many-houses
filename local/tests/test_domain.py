@@ -24,7 +24,11 @@ def test_house_notes_keep_their_lines():
     ({"purchase_price_cents": -1}, "valor da compra"), ({"purchase_price_cents": 10.5}, "valor da compra"),
     ({"purchase_price_cents": True}, "valor da compra"), ({"purchase_price_cents": MAX_AMOUNT_CENTS + 1}, "valor"),
     ({"purchase_costs_cents": "100"}, "custos da compra"), ({"status": "demolished"}, "situação"),
-    ({"down_payment_cents": -1}, "entrada"), ({"down_payment_cents": 30_000_001}, "maior que o valor do imóvel"),
+    ({"payment_type": "installments", "down_payment_cents": -1}, "entrada"),
+    ({"payment_type": "installments", "down_payment_cents": 30_000_001}, "maior que o valor do imóvel"),
+    ({"payment_type": "leasing"}, "forma de pagamento"), ({"target_profit_percent": -1}, "lucro desejado"),
+    ({"target_profit_percent": "30"}, "lucro desejado"), ({"target_profit_percent": 1001}, "lucro desejado"),
+    ({"target_profit_percent": True}, "lucro desejado"),
 ])
 def test_invalid_house(change, message):
     with pytest.raises(ValidationError, match=message):
@@ -59,12 +63,22 @@ def test_totals_add_up_by_category():
     assert result["by_category"] == {"material": 350, "labor": 1000, "services": 0, "project": 0, "other": 0}
 
 
-def test_house_down_payment():
-    house = House.from_input(house_input(down_payment_cents=6_000_000))
+def test_house_payment_type_and_down_payment():
+    house = House.from_input(house_input(payment_type="installments", down_payment_cents=6_000_000))
     assert house.down_payment_cents == 6_000_000 and House.from_dict(house.to_dict()) == house
-    assert House.from_input(house_input()).down_payment_cents == 0
-    old = {k: v for k, v in house.to_dict().items() if k != "down_payment_cents"}   # saved before the field existed
-    assert House.from_dict(old).down_payment_cents == 0
+    cash = House.from_input(house_input(down_payment_cents=6_000_000))
+    assert cash.payment_type == "cash" and cash.down_payment_cents == 0            # no entrada when cash
+    # saved before these fields existed
+    new_fields = ("down_payment_cents", "payment_type", "target_profit_percent")
+    old = {k: v for k, v in house.to_dict().items() if k not in new_fields}
+    assert House.from_dict(old).payment_type == "cash" and House.from_dict(old).target_profit_percent == 0
+    with_entrada = {k: v for k, v in house.to_dict().items() if k != "payment_type"}
+    assert House.from_dict(with_entrada).payment_type == "installments"
+
+
+@pytest.mark.parametrize("given, stored", [(None, 0), (30, 30), (12.5, 12.5), (12.345, 12.35), (30.0, 30)])
+def test_target_profit_percent(given, stored):
+    assert House.from_input(house_input(target_profit_percent=given)).target_profit_percent == stored
 
 
 @pytest.mark.parametrize("start, months, expected", [

@@ -86,23 +86,28 @@ def run():
         page.click("dialog >> text=Salvar")
         expect(page.locator(".toast.error").last).to_contain_text("Valor do imóvel")
         page.fill("#h-price", "300.000,00")
-        page.fill("#h-down", "60.000")
         page.fill("#h-costs", "18.000")
+        expect(page.locator("#h-down")).to_be_hidden()                                 # à vista: no entrada
+        page.locator("label.choice", has_text="Parcelado").click()
+        page.fill("#h-down", "60.000")
+        page.fill("#h-count", "3")
+        page.fill("#h-amount", "80.000")
+        expect(page.locator("#h-first")).to_have_value("2026-02-15")                   # a month after the purchase
+        expect(page.locator("#h-summary")).to_contain_text("3 × R$ 80.000,00 = R$ 300.000,00")
+        page.fill("#h-profit", "30")
         calls = []
         page.on("request", lambda r: "/houses" in r.url and calls.append(f"{r.method} {r.url.split('/houses', 1)[1]}"))
         page.click("dialog >> text=Salvar")
         expect(page.locator("h1")).to_contain_text("Casa Azul")
         expect(page.locator("#house-totals")).to_contain_text("318.000,00")
         assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
+        expect(page.locator("#purchase")).to_contain_text("Parcelado")
         expect(page.locator("#purchase")).to_contain_text("60.000,00")                 # entrada
         expect(page.locator("#purchase")).to_contain_text("240.000,00")                # the rest, in installments
+        expect(page.locator("#sale")).to_contain_text("lucrar 30 %")
+        expect(page.locator("#sale .sale-price")).to_have_text("R$ 413.400,00")       # 318.000 + 30%
 
-        # installments: three are added, the first is paid, the last deleted
-        page.click("text=Adicionar prestações")
-        page.fill("#i-count", "3")
-        page.fill("#i-amount", "80.000")
-        page.fill("#i-first", "2026-02-15")
-        page.click("dialog >> text=Adicionar")
+        # installments: the three registered with the house; the first is paid, the last deleted
         expect(page.locator("#installments tbody tr")).to_have_count(3)
         expect(page.locator("#installments tbody")).to_contain_text("15/04/2026")
         expect(page.locator("#installments .totals")).to_contain_text("0 de 3")
@@ -127,6 +132,7 @@ def run():
             expect(page.locator("#expenses tbody")).to_contain_text(description)
         expect(page.locator("#house-totals")).to_contain_text("5.500,50")       # renovation
         expect(page.locator("#house-totals")).to_contain_text("323.500,50")     # total
+        expect(page.locator("#sale .sale-price")).to_have_text("R$ 420.550,65")       # goes up with the renovation
         expect(page.locator(".bars")).to_contain_text("Mão de obra")
 
         row = page.locator("#expenses tbody tr", has_text="Pedreiro")
@@ -146,12 +152,15 @@ def run():
         page.click("text=Editar casa")
         expect(page.locator("#h-price")).to_have_value("300.000,00")
         expect(page.locator("#h-down")).to_have_value("60.000,00")
+        expect(page.locator("#h-profit")).to_have_value("30")
+        expect(page.locator("#h-count")).to_have_count(0)                              # the plan: on the house page
         page.select_option("#h-status", "ready")
         page.click("dialog >> text=Salvar")
         expect(page.locator("h1 .badge")).to_have_text("Pronta")
         page.click("text=‹ Casas")
         expect(page.locator(".list-item")).to_have_count(1)
         expect(page.locator("#portfolio")).to_contain_text("321.000,00")
+        expect(page.locator(".list-item")).to_contain_text("vender por R$ 417.300,00")           # 321.000 + 30%
 
         # deleting the house
         page.locator(".list-item", has_text="Casa Azul").click()

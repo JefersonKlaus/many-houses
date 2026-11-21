@@ -88,6 +88,21 @@ button.link.back { padding-left: 0; color: var(--brand); margin-bottom: 4px; }
 .empty-state h2 { margin: 0; }
 .empty-state button { margin-top: 12px; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+/* "Forma de pagamento": two choices side by side, like a switch */
+fieldset.choices { display: flex; gap: 8px; margin: 14px 0 0; padding: 0; border: 0; }
+fieldset.choices legend { padding: 0; margin-bottom: 4px; font-size: .9rem; color: var(--muted); }
+.choice { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 10px;
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 1rem; cursor: pointer; }
+.choice input { width: auto; margin: 0; accent-color: var(--brand); }
+.choice:has(input:checked) { border-color: var(--brand); background: var(--brand-light); color: var(--brand); font-weight: 600; }
+.choice:has(input:focus-visible) { outline: 3px solid var(--brand); outline-offset: 2px; }
+.installments-fields { margin-top: 4px; padding: 0 12px 10px; border: 1px solid var(--border); border-top: 0;
+  border-radius: 0 0 8px 8px; }
+/* the suggested sale price */
+.card.sale { border-color: var(--brand); background: var(--brand-light); }
+.sale-label { display: block; color: var(--brand); font-weight: 600; }
+.sale-price { display: block; font-size: 1.8rem; line-height: 1.2; color: var(--text); font-variant-numeric: tabular-nums; }
+.card.sale p { margin: 6px 0 0; }
 .hint { margin: 6px 0 0; font-size: .8rem; }
 .address { margin: -8px 0 0; }
 .notes { margin: 12px 0 0; white-space: pre-line; }

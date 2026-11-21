@@ -2,8 +2,8 @@
 // (price, entrada and the installments being paid), its renovation costs by category and the list of costs.
 // Every change answers the house's whole page, which is drawn at once: one request per change, never two.
 import { api } from "../api.js";
-import { actionsMenu, centsToText, formatDate, formatMoney, h, notify, openDialog, percent, render, toCents, today,
-  whileDisabled } from "../util.js";
+import { actionsMenu, centsToText, formatDate, formatMoney, h, notify, openDialog, percent, percentText, render,
+  toCents, toPercent, today, whileDisabled } from "../util.js";
 import { pagedList } from "./paged-list.js";
 
 // The API's codes, in the order the screen shows them (backend/core/houses_core/domain/models.py).
@@ -14,6 +14,14 @@ const CATEGORIES = { material: "Material", labor: "Mão de obra", services: "Ser
 const tile = (label, value, note) => h("div", {}, h("span", {}, label), h("strong", {}, value),
   note && h("small", { className: "muted" }, note));
 const INSTALLMENTS_PAGE = 12;                   // a year of prestações per page
+
+/** "2026-01-31" -> "2026-02-28": a month later, the same day or the month's last day (like the backend). */
+function addMonth(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m, Math.min(d, last))).toISOString().slice(0, 10);
+}
 const badge = (status) => h("span", { className: `badge status-${status}` }, STATUS[status] || status);
 
 export async function mount(container) {
@@ -29,7 +37,8 @@ export async function mount(container) {
       h("div", { className: "list-title" }, h("strong", {}, x.name, badge(x.status)),
         h("strong", { className: "amount" }, formatMoney(x.totals.total_cents))),
       h("div", { className: "list-title muted" }, h("span", {}, x.address),
-        h("span", {}, `compra ${formatMoney(x.totals.purchase_cents)} · reforma ${formatMoney(x.totals.renovation_cents)}`))),
+        h("span", {}, `compra ${formatMoney(x.totals.purchase_cents)} · reforma ${formatMoney(x.totals.renovation_cents)}`,
+          x.target_profit_percent > 0 && x.status !== "sold" && ` · vender por ${formatMoney(x.totals.sale.suggested_price_cents)}`))),
     h("span", { className: "chevron", "aria-hidden": "true" }, "›"));
     render(container,
       h("div", { className: "row" }, h("h1", {}, "Casas", houses.length > 0 && h("span", { className: "count" }, ` (${houses.length})`)),
@@ -74,17 +83,33 @@ export async function mount(container) {
         tile("Compra", formatMoney(totals.purchase_cents)),
         tile("Reforma", formatMoney(totals.renovation_cents), `${totals.expense_count} custo(s)`),
         tile("Total investido", formatMoney(totals.total_cents))),
+      saleCard(house, totals),
       purchaseCard(house, totals.payment),
-      installmentsCard(house, installments, totals.payment),
+      house.payment_type === "installments" && installmentsCard(house, installments, totals.payment),
       categoriesCard(totals),
       expensesCard(house, expenses, totals));
   }
 
+  /** For how much to sell today, as it is, to make the profit wanted: it goes up with every renovation cost. */
+  function saleCard(house, totals) {
+    const { sale } = totals;
+    if (!(sale.target_profit_percent > 0)) {
+      return h("div", { className: "card sale", id: "sale" }, h("p", { className: "muted" },
+        "Informe o lucro desejado (%) em “Editar casa” e o sistema mostra por quanto vender a casa hoje."));
+    }
+    return h("div", { className: "card sale", id: "sale" },
+      h("span", { className: "sale-label" }, `Para lucrar ${percentText(sale.target_profit_percent)} %, venda hoje por`),
+      h("strong", { className: "sale-price" }, formatMoney(sale.suggested_price_cents)),
+      h("p", { className: "muted" }, `Total investido ${formatMoney(totals.total_cents)} + lucro de `
+        + `${formatMoney(sale.target_profit_cents)}. O valor sobe a cada custo de reforma lançado.`));
+  }
+
   function purchaseCard(house, payment) {
-    const financed = payment.down_payment_cents > 0 || payment.installments_count > 0;
+    const financed = house.payment_type === "installments";
     return h("div", { className: "card", id: "purchase" }, h("h2", {}, "Compra"),
       h("dl", { className: "details" },
         h("dt", {}, "Data"), h("dd", {}, formatDate(house.purchase_date)),
+        h("dt", {}, "Pagamento"), h("dd", {}, financed ? "Parcelado" : "À vista"),
         h("dt", {}, "Valor do imóvel"), h("dd", {}, formatMoney(house.purchase_price_cents)),
         financed && [
           h("dt", {}, "Entrada"), h("dd", {}, formatMoney(payment.down_payment_cents)),
@@ -103,7 +128,7 @@ export async function mount(container) {
     const card = h("div", { className: "card", id: "installments" }, h("div", { className: "row" }, h("h2", {}, "Prestações"), add));
     if (installments.length === 0) {
       card.append(h("p", { className: "muted" },
-        "Comprou parcelado? Informe a entrada em “Editar casa” e adicione aqui as prestações, para marcar cada uma quando for paga."));
+        "Nenhuma prestação. Adicione as prestações para marcar cada uma quando for paga."));
       return card;
     }
     const now = today();
@@ -223,28 +248,77 @@ export async function mount(container) {
       value: house ? centsToText(house.purchase_price_cents) : "" });
     const costs = h("input", { id: "h-costs", inputMode: "decimal", placeholder: "0,00",
       value: house ? centsToText(house.purchase_costs_cents) : "" });
-    const down = h("input", { id: "h-down", inputMode: "decimal", placeholder: "0,00",
-      value: house?.down_payment_cents ? centsToText(house.down_payment_cents) : "" });
     const status = select("h-status", STATUS, house?.status || "renovating");
     const notes = h("textarea", { id: "h-notes", maxLength: 2000, rows: 3, value: house?.notes || "" });
+    const profit = h("input", { id: "h-profit", inputMode: "decimal", placeholder: "Ex.: 30",
+      value: house?.target_profit_percent ? percentText(house.target_profit_percent) : "" });
+
+    // how it was paid: à vista, or parcelado with the entrada and (when registering) the installments
+    const paymentType = house?.payment_type || "cash";
+    const radio = (value, text) => h("label", { className: "choice" },
+      h("input", { type: "radio", name: "h-payment", value, checked: value === paymentType, onchange: toggle }), text);
+    const down = h("input", { id: "h-down", inputMode: "decimal", placeholder: "0,00",
+      value: house?.down_payment_cents ? centsToText(house.down_payment_cents) : "" });
+    const count = h("input", { id: "h-count", type: "number", min: 1, max: 600, inputMode: "numeric", placeholder: "Ex.: 120" });
+    const amount = h("input", { id: "h-amount", inputMode: "decimal", placeholder: "0,00" });
+    const first = h("input", { id: "h-first", type: "date" });
+    const summary = h("p", { className: "muted hint", id: "h-summary" });
+    const installments = h("div", { className: "installments-fields" },
+      h("div", { className: "two-columns" },
+        h("div", {}, field("h-down", "Entrada (R$)", down)),
+        !house && [
+          h("div", {}, field("h-count", "Quantidade de parcelas", count)),
+          h("div", {}, field("h-amount", "Valor de cada parcela (R$)", amount)),
+          h("div", {}, field("h-first", "Data da primeira parcela", first))]),
+      house ? h("p", { className: "muted hint" }, "As prestações são alteradas na página da casa.") : summary);
+    const chosen = () => dialog.querySelector("input[name=h-payment]:checked").value;
+    function toggle() { installments.hidden = chosen() !== "installments"; }
+    function updateSummary() {          // "Entrada R$ 60.000,00 + 120 × R$ 2.000,00 = R$ 300.000,00"
+      const n = Number(count.value), each = toCents(amount.value), entrada = toCents(down.value || "0");
+      summary.textContent = n > 0 && each !== null && entrada !== null
+        ? `Entrada ${formatMoney(entrada)} + ${n} × ${formatMoney(each)} = ${formatMoney(entrada + n * each)}` : "";
+    }
+    for (const input of [down, count, amount]) input.addEventListener("input", updateSummary);
+    // the first installment: a month after the purchase, following the purchase date until it is typed in
+    let firstTyped = false;
+    first.addEventListener("input", () => { firstTyped = true; });
+    const followPurchase = () => { if (!firstTyped) first.value = addMonth(date.value); };
+    date.addEventListener("input", followPurchase);
+    date.addEventListener("change", followPurchase);
+    followPurchase();
+
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(house ? `Editar ${house.name}` : "Nova casa",
       field("h-name", "Nome", name), field("h-address", "Endereço", address),
       h("div", { className: "two-columns" },
         h("div", {}, field("h-date", "Data da compra", date)), h("div", {}, field("h-status", "Situação", status)),
         h("div", {}, field("h-price", "Valor do imóvel (R$)", price)),
-        h("div", {}, field("h-down", "Entrada (R$, se parcelado)", down)),
         h("div", {}, field("h-costs", "Custos da compra (R$)", costs))),
-      h("p", { className: "muted hint" }, "Entrada: deixe em branco se pagou à vista. As prestações são adicionadas na página da casa."),
       h("p", { className: "muted hint" }, "Custos da compra: ITBI, escritura, registro, corretagem, certidões…"),
+      h("fieldset", { className: "choices" }, h("legend", {}, "Forma de pagamento"),
+        radio("cash", "À vista"), radio("installments", "Parcelado")),
+      installments,
+      field("h-profit", "Lucro desejado (%)", profit),
+      h("p", { className: "muted hint" }, "Sobre o total investido (compra + reforma): a página da casa mostra por quanto vender hoje."),
       field("h-notes", "Observações", notes),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+    toggle();
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
+        const target = toPercent(profit.value);
+        if (target === null) throw new Error("Lucro desejado: informe um percentual como 30 ou 12,5");
         const body = { name: name.value, address: address.value, purchase_date: date.value, status: status.value,
           notes: notes.value, purchase_price_cents: cents(price, "Valor do imóvel"),
           purchase_costs_cents: cents(costs, "Custos da compra", false),
-          down_payment_cents: cents(down, "Entrada", false) };
+          target_profit_percent: target, payment_type: chosen() };
+        if (body.payment_type === "installments") {
+          body.down_payment_cents = cents(down, "Entrada", false);
+          if (!house) {
+            if (!(Number(count.value) >= 1)) throw new Error("Quantidade de parcelas: informe quantas são");
+            body.installments = { count: Number(count.value), amount_cents: cents(amount, "Valor de cada parcela"),
+              first_due_date: first.value };
+          }
+        }
         const view = house ? await api("PUT", `/houses/${house.id}`, body) : await api("POST", "/houses", body);
         notify("Casa salva.");
         dialog.close();

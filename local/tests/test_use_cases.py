@@ -19,7 +19,10 @@ from update_installment.use_case import update_installment
 
 
 def new_house(deps, **extra):
-    return create_house(deps, OWNER, house_input(**extra))["house"]["id"]
+    """A house bought in installments with no installment yet (so tests add their own)."""
+    hid = create_house(deps, OWNER, house_input(**extra))["house"]["id"]
+    update_house(deps, OWNER, hid, house_input(payment_type="installments", **extra))
+    return hid
 
 
 def new_expense(deps, house_id, **extra):
@@ -35,7 +38,7 @@ def test_every_change_answers_the_house_page(deps):
     hid = view["house"]["id"]
     assert view == get_house(deps, OWNER, hid)
     assert view["expenses"] == [] and view["installments"] == []
-    for change in (lambda: update_house(deps, OWNER, hid, house_input(name="Nova")),
+    for change in (lambda: update_house(deps, OWNER, hid, house_input(name="Nova", payment_type="installments")),
                    lambda: create_expense(deps, OWNER, hid, expense_input()),
                    lambda: create_installments(deps, OWNER, hid, plan_input())):
         assert change() == get_house(deps, OWNER, hid)
@@ -72,7 +75,7 @@ def test_update_house_keeps_its_costs_and_installments(deps):
     hid = new_house(deps)
     new_expense(deps, hid)
     create_installments(deps, OWNER, hid, plan_input())
-    view = update_house(deps, OWNER, hid, house_input(name="Casa Verde", status="sold"))
+    view = update_house(deps, OWNER, hid, house_input(name="Casa Verde", status="sold", payment_type="installments"))
     assert view["house"]["id"] == hid and view["house"]["status"] == "sold"
     assert view["totals"]["expense_count"] == 1 and len(view["installments"]) == 3
 
@@ -199,3 +202,53 @@ def test_invalid_input_writes_nothing(deps):
     with pytest.raises(ValidationError):
         create_installments(deps, OWNER, hid, plan_input(count=0))
     assert get_house(deps, OWNER, hid)["installments"] == []
+
+
+def test_bought_cash(deps):
+    view = create_house(deps, OWNER, house_input(down_payment_cents=5000, installments=plan_input()))
+    assert view["house"]["payment_type"] == "cash"
+    assert view["house"]["down_payment_cents"] == 0 and view["installments"] == []     # ignored when cash
+    with pytest.raises(ValidationError, match="à vista"):
+        create_installments(deps, OWNER, view["house"]["id"], plan_input())
+
+
+def test_bought_in_installments_registers_the_plan_with_the_house(deps):
+    view = create_house(deps, OWNER, house_input(payment_type="installments", down_payment_cents=6_000_000,
+                                                 installments=plan_input(count=120, amount_cents=300_000)))
+    assert view["house"]["payment_type"] == "installments" and len(view["installments"]) == 120
+    payment = view["totals"]["payment"]
+    assert payment["down_payment_cents"] == 6_000_000 and payment["installments_cents"] == 36_000_000
+    assert view["installments"][0]["due_date"] == "2026-02-10"
+    assert view["installments"][-1]["due_date"] == "2036-01-10"
+
+
+@pytest.mark.parametrize("plan, message", [
+    (None, "parcelado"), ("12x", "parcelado"), (plan_input(count=0), "quantidade"),
+    (plan_input(amount_cents=0), "valor"), (plan_input(first_due_date=""), "primeiro vencimento"),
+])
+def test_installments_without_a_valid_plan_saves_nothing(deps, plan, message):
+    with pytest.raises(ValidationError, match=message):
+        create_house(deps, OWNER, house_input(payment_type="installments", installments=plan))
+    assert list_houses(deps, OWNER) == [] and deps.repo.list_installments(OWNER) == []
+
+
+def test_a_house_with_installments_only_becomes_cash_without_them(deps):
+    view = create_house(deps, OWNER, house_input(payment_type="installments", installments=plan_input(count=2)))
+    hid = view["house"]["id"]
+    with pytest.raises(ValidationError, match="exclua antes as prestações"):
+        update_house(deps, OWNER, hid, house_input(payment_type="cash"))
+    for inst in view["installments"]:
+        delete_installment(deps, OWNER, hid, inst["id"])
+    assert update_house(deps, OWNER, hid, house_input(payment_type="cash"))["house"]["payment_type"] == "cash"
+
+
+def test_suggested_sale_price_follows_what_was_invested(deps):
+    view = create_house(deps, OWNER, house_input(target_profit_percent=30))
+    hid = view["house"]["id"]
+    assert view["totals"]["sale"] == {"target_profit_percent": 30, "target_profit_cents": 9_540_000,
+                                      "suggested_price_cents": 41_340_000}          # 318.000 + 30%
+    view = create_expense(deps, OWNER, hid, expense_input(amount_cents=2_000_000))   # R$ 20.000 of renovation
+    assert view["totals"]["sale"]["suggested_price_cents"] == 43_940_000             # 338.000 + 30%
+    assert list_houses(deps, OWNER)[0]["totals"]["sale"]["suggested_price_cents"] == 43_940_000
+    view = update_house(deps, OWNER, hid, house_input(target_profit_percent=0))
+    assert view["totals"]["sale"]["suggested_price_cents"] == view["totals"]["total_cents"]

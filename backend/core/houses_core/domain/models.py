@@ -19,6 +19,8 @@ MAX_INSTALLMENTS_AT_ONCE = 600              # 50 years of monthly installments
 
 # The screens show these in Portuguese (frontend/js/screens/houses.js).
 HOUSE_STATUSES = ("renovating", "ready", "sold")                         # em reforma, pronta, vendida
+PAYMENT_TYPES = ("cash", "installments")                                  # à vista, parcelado
+MAX_PROFIT_PERCENT = 1000
 EXPENSE_CATEGORIES = ("material", "labor", "services", "project", "other")  # material, mão de obra, serviços,
                                                                           # projeto e documentação, outros
 
@@ -29,7 +31,8 @@ FIELD_LABELS = {
     "purchase_costs_cents": "custos da compra", "date": "data", "category": "categoria",
     "description": "descrição", "supplier": "fornecedor", "amount_cents": "valor",
     "down_payment_cents": "entrada", "due_date": "vencimento", "paid_date": "data do pagamento",
-    "first_due_date": "primeiro vencimento", "count": "quantidade",
+    "first_due_date": "primeiro vencimento", "count": "quantidade", "payment_type": "forma de pagamento",
+    "target_profit_percent": "lucro desejado",
 }
 
 
@@ -79,6 +82,17 @@ def _cents(payload: Mapping[str, Any], field: str, minimum: int = 0, required: b
     return value
 
 
+def _percent(payload: Mapping[str, Any], field: str) -> float:
+    """A percentage like 30 or 12.5 (two decimals at most); missing = 0."""
+    value = payload.get(field)
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_PROFIT_PERCENT:
+        raise ValidationError(f"{FIELD_LABELS[field]}: informe um percentual de 0 a {MAX_PROFIT_PERCENT}")
+    rounded = round(float(value), 2)
+    return int(rounded) if rounded.is_integer() else rounded
+
+
 def _choice(payload: Mapping[str, Any], field: str, options: tuple[str, ...], default: Optional[str] = None) -> str:
     value = payload.get(field, default)
     if value not in options:
@@ -89,8 +103,9 @@ def _choice(payload: Mapping[str, Any], field: str, options: tuple[str, ...], de
 @dataclass(frozen=True)
 class House:
     """A house that was bought to be renovated. The purchase is its price plus what it cost to buy it
-    (ITBI, deed, registry, broker...); the renovation costs are Expenses. When the price is not paid in
-    full at once, `down_payment_cents` is the entrada and the rest is paid in Installments."""
+    (ITBI, deed, registry, broker...); the renovation costs are Expenses. It is bought "cash" (à vista)
+    or in "installments" (parcelado): then `down_payment_cents` is the entrada and the rest is paid in
+    Installments. `target_profit_percent` is the profit wanted on the sale, over what was invested."""
     id: str
     name: str                       # a short nickname: "Casa da Rua das Flores"
     address: str
@@ -99,19 +114,23 @@ class House:
     purchase_costs_cents: int = 0
     status: str = "renovating"
     notes: str = ""
-    down_payment_cents: int = 0     # entrada: 0 when there is no installment plan
+    down_payment_cents: int = 0     # entrada: always 0 when bought cash
+    payment_type: str = "cash"
+    target_profit_percent: float = 0
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None) -> "House":
         price = _cents(payload, "purchase_price_cents")
-        down_payment = _cents(payload, "down_payment_cents", required=False)
+        payment_type = _choice(payload, "payment_type", PAYMENT_TYPES, "cash")
+        down_payment = _cents(payload, "down_payment_cents", required=False) if payment_type == "installments" else 0
         if down_payment > price:
             raise ValidationError("entrada: não pode ser maior que o valor do imóvel")
         return cls(id or new_id(), _text(payload, "name"), _text(payload, "address", 200),
                    parse_date(payload.get("purchase_date"), FIELD_LABELS["purchase_date"]),
                    price, _cents(payload, "purchase_costs_cents", required=False),
                    _choice(payload, "status", HOUSE_STATUSES, "renovating"),
-                   _text(payload, "notes", 2000, required=False), down_payment)
+                   _text(payload, "notes", 2000, required=False), down_payment, payment_type,
+                   _percent(payload, "target_profit_percent"))
 
     @property
     def purchase_total_cents(self) -> int:
@@ -124,7 +143,10 @@ class House:
     def from_dict(cls, d: Mapping[str, Any]) -> "House":
         return cls(d["id"], d["name"], d["address"], d["purchase_date"], d["purchase_price_cents"],
                    d.get("purchase_costs_cents", 0), d.get("status", "renovating"), d.get("notes", ""),
-                   d.get("down_payment_cents", 0))
+                   d.get("down_payment_cents", 0),
+                   # saved before the field existed: an entrada meant it was bought in installments
+                   d.get("payment_type", "installments" if d.get("down_payment_cents") else "cash"),
+                   d.get("target_profit_percent", 0))
 
 
 @dataclass(frozen=True)

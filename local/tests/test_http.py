@@ -29,7 +29,9 @@ def api():
 
 
 def test_full_flow(api):
-    status, view = call(api, "POST", "/houses", house_input(down_payment_cents=6_000_000))
+    status, view = call(api, "POST", "/houses", house_input(
+        payment_type="installments", down_payment_cents=6_000_000,
+        installments={"first_due_date": "2026-01-10", "amount_cents": 50_000, "count": 1}))
     assert status == 201 and view["house"]["status"] == "renovating"
     hid = view["house"]["id"]
     status, view = call(api, "POST", f"/houses/{hid}/expenses", expense_input())
@@ -41,19 +43,19 @@ def test_full_flow(api):
     assert status == 200 and view["expenses"][0]["amount_cents"] == 10
     status, houses = call(api, "GET", "/houses")
     assert status == 200 and houses[0]["totals"]["total_cents"] == 31_800_010
-    assert call(api, "PUT", f"/houses/{hid}", house_input(name="Nova", down_payment_cents=6_000_000))[1]["house"]["name"] == "Nova"
+    assert call(api, "PUT", f"/houses/{hid}", house_input(name="Nova", payment_type="installments", down_payment_cents=6_000_000))[1]["house"]["name"] == "Nova"
     status, view = call(api, "DELETE", f"/houses/{hid}/expenses/{eid}")
     assert status == 200 and view["expenses"] == []
     assert call(api, "DELETE", f"/houses/{hid}/expenses/{eid}")[0] == 404
 
     status, view = call(api, "POST", f"/houses/{hid}/installments",
                         {"first_due_date": "2026-02-10", "amount_cents": 100_000, "count": 2})
-    assert status == 201 and len(view["installments"]) == 2
-    first = view["installments"][0]
+    assert status == 201 and len(view["installments"]) == 3
+    first = view["installments"][1]
     status, view = call(api, "PUT", f"/houses/{hid}/installments/{first['id']}", {**first, "paid_date": "2026-02-10"})
     assert status == 200 and view["totals"]["payment"]["total_paid_cents"] == 6_100_000
     status, view = call(api, "DELETE", f"/houses/{hid}/installments/{first['id']}")
-    assert status == 200 and len(view["installments"]) == 1
+    assert status == 200 and len(view["installments"]) == 2
     assert call(api, "DELETE", f"/houses/{hid}/installments/{first['id']}")[0] == 404
 
     assert call(api, "DELETE", f"/houses/{hid}") == (204, None)

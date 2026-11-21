@@ -1,9 +1,10 @@
 # Many Houses
 
 Manages houses bought to be renovated, serverless on AWS. For each house: what it cost to buy
-(price + ITBI, deed, broker...), how it is being paid (entrada and monthly installments, each one
+(price + ITBI, deed, broker...), how it was paid (cash, or entrada + monthly installments, each one
 marked when paid) and every renovation cost (material, labor, services, project, other), with the
-totals per house, per category and for all houses together.
+totals per house, per category and for all houses together. Given the profit wanted (%), it tells
+for how much to sell each house today, as it is.
 
 The app's screens are in Brazilian Portuguese; code and docs are in English.
 
@@ -92,7 +93,7 @@ backend/
 | Route | What it does |
 |---|---|
 | `GET /houses` | every house, each with its totals (purchase, renovation, total) |
-| `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register, change, delete a house (with its costs) |
+| `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register (bought in installments: with its plan, `installments`), change, delete a house (with its costs) |
 | `GET /houses/{id}` | one house: its costs (newest first), its installments (in due order) and its totals |
 | `POST /houses/{id}/expenses` | add a renovation cost |
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
@@ -111,8 +112,10 @@ Rules worth knowing:
 - The login is the phone: the screen takes DDD + number (digits only) and sends `+55<digits>` to Cognito.
 - Money is always integer cents (`purchase_price_cents`, `amount_cents`...), never a float.
 - Purchase = price + purchase costs. Total invested = purchase + every renovation cost.
-- Bought in installments: entrada (`down_payment_cents`, at most the price) + installments, each one
-  paid when it has a `paid_date`. Paid so far = entrada + the paid installments.
+- `payment_type` is `cash` or `installments`. In installments: entrada (`down_payment_cents`, at most
+  the price) + installments, registered with the house and each one paid when it has a `paid_date`.
+  Paid so far = entrada + the paid installments. A cash house has no entrada and takes no installment.
+- Suggested sale price today = total invested (purchase + renovation) + `target_profit_percent` of it.
 - Deleting a house deletes its costs and installments first, so no orphan is left behind.
 - DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>`, `EXP#<house id>#<id>` or
   `INST#<house id>#<id>`. A payment plan is written with `BatchWriteItem`, 25 items per call.

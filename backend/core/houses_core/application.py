@@ -45,6 +45,11 @@ def check_expense_limit(repo: Repository, owner: str, house_id: str) -> None:
         raise ValidationError(f"limite de {MAX_EXPENSES_PER_HOUSE} custos nesta casa atingido")
 
 
+def check_bought_in_installments(house: House) -> None:
+    if house.payment_type != "installments":
+        raise ValidationError("esta casa foi comprada à vista: mude a forma de pagamento para parcelado")
+
+
 def check_installment_limit(repo: Repository, owner: str, house_id: str, adding: int) -> None:
     if len(repo.list_installments(owner, house_id)) + adding > MAX_INSTALLMENTS_PER_HOUSE:
         raise ValidationError(f"limite de {MAX_INSTALLMENTS_PER_HOUSE} prestações nesta casa")
@@ -75,7 +80,16 @@ def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Ins
     renovation = sum(by_category.values())
     return {"purchase_cents": house.purchase_total_cents, "renovation_cents": renovation,
             "total_cents": house.purchase_total_cents + renovation, "expense_count": count,
-            "by_category": by_category, "payment": payment(house, installments)}
+            "by_category": by_category, "payment": payment(house, installments),
+            "sale": sale(house, house.purchase_total_cents + renovation)}
+
+
+def sale(house: House, invested_cents: int) -> dict[str, Any]:
+    """For how much to sell the house today, as it is, to make the profit wanted: what was invested
+    so far (purchase + renovation) plus that percentage of it."""
+    profit = round(invested_cents * house.target_profit_percent / 100)
+    return {"target_profit_percent": house.target_profit_percent, "target_profit_cents": profit,
+            "suggested_price_cents": invested_cents + profit}
 
 
 def payment(house: House, installments: Iterable[Installment]) -> dict[str, Any]:
