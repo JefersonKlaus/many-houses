@@ -40,7 +40,7 @@ FIELD_LABELS = {
     "first_due_date": "primeiro vencimento", "count": "quantidade", "payment_type": "forma de pagamento",
     "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área", "paid_by": "pago por",
     "phone": "celular", "nf_photo": "foto da NF", "material_photo": "foto do material ou serviço",
-    "caption": "descrição",
+    "caption": "descrição", "default_profit_percent": "lucro desejado padrão",
 }
 
 
@@ -441,3 +441,22 @@ class TimelineEntry:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "TimelineEntry":
         return cls(d["id"], d["house_id"], d["date"], d.get("caption", ""), tuple(d.get("photos", ())))
+
+
+@dataclass(frozen=True)
+class Profile:
+    """The user's settings: the name partners see (when empty, the login's name) and the profit wanted
+    that a new house starts with."""
+    name: str = ""
+    default_profit_percent: float = 0
+
+    @classmethod
+    def from_input(cls, payload: Mapping[str, Any]) -> "Profile":
+        return cls(_text(payload, "name", 80, required=False), _percent(payload, "default_profit_percent"))
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "Profile":
+        return cls(d.get("name", ""), d.get("default_profit_percent", 0))

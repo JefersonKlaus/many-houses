@@ -12,16 +12,17 @@ const MESSAGES = {
   LimitExceededException: "Muitas tentativas. Espere um pouco.",
 };
 
-async function cognito(target, body) {
+/** One call to Cognito's API. `messages`: what to say for each Cognito error (in Portuguese). */
+async function cognito(target, body, messages = MESSAGES, fallback = "Não foi possível entrar. Tente de novo.") {
   const response = await fetch(`https://cognito-idp.${CONFIG.region}.amazonaws.com/`, {
     method: "POST",
     headers: { "Content-Type": "application/x-amz-json-1.1", "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}` },
-    body: JSON.stringify({ ClientId: CONFIG.clientId, ...body }),
+    body: JSON.stringify(body),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const type = String(data.__type || "").split("#").pop();
-    throw new Error(MESSAGES[type] || "Não foi possível entrar. Tente de novo.");
+    throw new Error(messages[type] || fallback);
   }
   return data;
 }
@@ -29,7 +30,8 @@ async function cognito(target, body) {
 let cached = null;
 
 function store(result, previous = {}) {
-  const t = { ...previous, idToken: result.IdToken, expiresAt: Date.now() + result.ExpiresIn * 1000 };
+  const t = { ...previous, idToken: result.IdToken, accessToken: result.AccessToken,      // access: to change the password
+    expiresAt: Date.now() + result.ExpiresIn * 1000 };
   if (result.RefreshToken) t.refresh = result.RefreshToken;
   try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(t)); } catch { /* private mode: kept in memory only */ }
   cached = t;
@@ -50,7 +52,7 @@ export function phoneToUsername(digits) {
 /** Returns {challenge} if Cognito asks for a new password (first access), otherwise stores the tokens. */
 export async function signIn(phone, password) {
   const username = phoneToUsername(phone);
-  const r = await cognito("InitiateAuth", {
+  const r = await cognito("InitiateAuth", { ClientId: CONFIG.clientId,
     AuthFlow: "USER_PASSWORD_AUTH", AuthParameters: { USERNAME: username, PASSWORD: password } });
   if (r.ChallengeName === "NEW_PASSWORD_REQUIRED") return { challenge: { session: r.Session, username } };
   store(r.AuthenticationResult);
@@ -58,7 +60,7 @@ export async function signIn(phone, password) {
 }
 
 export async function setNewPassword({ session, username }, password) {
-  const r = await cognito("RespondToAuthChallenge", {
+  const r = await cognito("RespondToAuthChallenge", { ClientId: CONFIG.clientId,
     ChallengeName: "NEW_PASSWORD_REQUIRED", Session: session,
     ChallengeResponses: { USERNAME: username, NEW_PASSWORD: password } });
   store(r.AuthenticationResult);
@@ -79,11 +81,21 @@ export async function token() {
   if (Date.now() < t.expiresAt - 60_000) return t.idToken;
   if (!t.refresh) { signOut(); return null; }
   try {
-    const r = await cognito("InitiateAuth", { AuthFlow: "REFRESH_TOKEN_AUTH", AuthParameters: { REFRESH_TOKEN: t.refresh } });
+    const r = await cognito("InitiateAuth", { ClientId: CONFIG.clientId, AuthFlow: "REFRESH_TOKEN_AUTH",
+      AuthParameters: { REFRESH_TOKEN: t.refresh } });
     store(r.AuthenticationResult, t);
     return load().idToken;
   } catch {
     signOut();
     return null;
   }
+}
+
+/** Changes the login's password (Configurações): the current one, then the new one. */
+export async function changePassword(current, proposed) {
+  await token();                                 // a fresh session (it refreshes the tokens when needed)
+  const access = load()?.accessToken;
+  if (!access) throw new Error("Saia e entre de novo para trocar a senha.");
+  await cognito("ChangePassword", { AccessToken: access, PreviousPassword: current, ProposedPassword: proposed },
+    { ...MESSAGES, NotAuthorizedException: "Senha atual incorreta." }, "Não foi possível trocar a senha. Tente de novo.");
 }

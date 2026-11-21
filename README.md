@@ -67,6 +67,7 @@ frontend/
   js/auth.js           Cognito login (tokens)
   js/config.js         where the API is (written by the deploy; empty in the repo)
   js/screens/houses.js the houses: list, one house's page, the forms
+  js/screens/settings.js Configurações: name, default profit, password
 ```
 
 The frontend doesn't know whether the backend is AWS or local: it calls `CONFIG.apiUrl`.
@@ -90,7 +91,8 @@ backend/
                      create_installments, update_installment, delete_installment,
                      create_invite, delete_invite, list_invites, accept_invite, decline_invite,
                      remove_partner,
-                     create_photo_upload, create_timeline_entry, update_timeline_entry, delete_timeline_entry
+                     create_photo_upload, create_timeline_entry, update_timeline_entry, delete_timeline_entry,
+                     get_settings, update_settings
     use_case.py      the action (only domain + ports, never AWS)
     handler.py       API Gateway event -> use case -> HTTP response
     lambda.json      {"route": "POST /houses", "database": "write"}
@@ -105,6 +107,7 @@ backend/
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
 | `POST /houses/{id}/installments` | add N monthly installments at once (`count`, `amount_cents`, `first_due_date`) |
 | `PUT` · `DELETE /houses/{id}/installments/{installment_id}` | change (or mark as paid: `paid_date`, `paid_by`), delete an installment |
+| `GET /settings` · `PUT /settings` | the user's settings: `name`, `default_profit_percent` (and the login's phone and e-mail) |
 | `POST /houses/{id}/photos` | a form to send one photo straight to S3: `{id, upload: {url, fields}}` |
 | `POST /houses/{id}/timeline` · `PUT` · `DELETE /houses/{id}/timeline/{entry_id}` | the timeline: a date, a caption and photos (by id) |
 | `POST /houses/{id}/invites` · `DELETE /houses/{id}/invites/{invite_id}` | invite a partner by phone, cancel an invite |
@@ -153,6 +156,9 @@ Rules worth knowing:
   `INST#<house id>#<id>`, `TL#<house id>#<id>` (timeline) or `LINK#<house id>` (a partner's link to the owner's house, which stays in
   the owner's partition); `PK = PHONE#<phone>`, `SK = INVITE#<id>` for the invites waiting. A payment
   plan is written with `BatchWriteItem`, 25 items per call.
+- Configurações: the name partners see (empty: the login's; changing it updates every house the user
+  is in), the default profit a new house starts with (kept as `PK = OWNER#<user>`, `SK = PROFILE`) and
+  the password (changed straight with Cognito, with the login's access token).
 - Every list and table shows 10 rows a page. Sold houses are hidden from the list until asked for,
   and always come last (the rest by name, then the sold ones by name).
 

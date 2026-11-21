@@ -6,12 +6,14 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from houses_core.application import user_name
 from houses_core.domain.errors import NotFound, ValidationError
 from houses_core.domain.models import Partner
 from houses_core.ports import Dependencies
 
 
 def accept_invite(deps: Dependencies, user: str, id: str, phone: str, name: str = "") -> dict[str, Any]:
+    name = user_name(deps.repo, user, name)
     pending = deps.repo.get_pending_invite(phone, id) if phone else None
     if pending is None:
         raise NotFound("convite não encontrado")

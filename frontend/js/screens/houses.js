@@ -53,17 +53,26 @@ export async function mount(container) {
     render(container,
       invites.map(inviteCard),
       h("div", { className: "row" }, h("h1", {}, "Casas", houses.length > 0 && h("span", { className: "count" }, ` (${houses.length})`)),
-        h("button", { className: "primary", onclick: () => houseDialog(null, show) }, "Nova casa")),
+        h("button", { className: "primary", onclick: newHouse }, "Nova casa")),
       houses.length > 0 && h("div", { className: "totals", id: "portfolio" },
         tile("Compras", formatMoney(sum("purchase_cents"))), tile("Reformas", formatMoney(sum("renovation_cents"))),
         tile("Total investido", formatMoney(sum("total_cents")))),
       all.length === 0 ? h("div", { className: "card empty-state" }, h("h2", {}, "Nenhuma casa ainda"),
         h("p", { className: "muted" }, "Cadastre a primeira casa comprada e acompanhe os custos da reforma."),
-        h("button", { className: "primary", onclick: () => houseDialog(null, show) }, "Nova casa"))
+        h("button", { className: "primary", onclick: newHouse }, "Nova casa"))
         : houses.length === 0 ? h("p", { className: "notice" }, "Nenhuma casa à venda ou em reforma.")
           : pagedList(houses, row, { label: "casas (nome ou endereço)", searchText: (x) => `${x.name} ${x.address}` }),
       sold > 0 && h("div", { className: "actions" }, h("button", { className: "link", id: "toggle-sold",
         onclick: () => { showSold = !showSold; list(); } }, showSold ? "Ocultar vendidas" : `Mostrar vendidas (${sold})`)));
+  }
+
+  /** The form of a new house, with the profit wanted set in Configurações already filled in. */
+  async function newHouse(e) {
+    await whileDisabled(e.currentTarget, async () => {
+      let defaults = { default_profit_percent: 0 };
+      try { defaults = await api("GET", "/settings"); } catch { /* without them the field just starts empty */ }
+      houseDialog(null, show, defaults);
+    });
   }
 
   /** "(11) 98888-7777 convidou você para ser sócio da casa X": accept (it opens) or decline. */
@@ -436,7 +445,7 @@ export async function mount(container) {
     return value;
   }
 
-  function houseDialog(house, onSaved) {
+  function houseDialog(house, onSaved, defaults = {}) {
     const name = h("input", { id: "h-name", maxLength: 80, value: house?.name || "", placeholder: "Ex.: Casa da Rua das Flores" });
     const address = h("input", { id: "h-address", maxLength: 200, value: house?.address || "" });
     const date = h("input", { id: "h-date", type: "date", value: house?.purchase_date || today() });
@@ -447,7 +456,8 @@ export async function mount(container) {
     const status = select("h-status", STATUS, house?.status || "renovating");
     const notes = h("textarea", { id: "h-notes", maxLength: 2000, rows: 3, value: house?.notes || "" });
     const profit = h("input", { id: "h-profit", inputMode: "decimal", placeholder: "Ex.: 30",
-      value: house?.target_profit_percent ? percentText(house.target_profit_percent) : "" });
+      value: house ? (house.target_profit_percent ? percentText(house.target_profit_percent) : "")
+        : defaults.default_profit_percent ? percentText(defaults.default_profit_percent) : "" });
 
     // the areas that need renovation: the house's own first (checked), then the suggestions not used yet
     const chips = h("div", { className: "chips", id: "h-areas" });

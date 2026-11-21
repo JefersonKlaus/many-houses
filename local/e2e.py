@@ -32,6 +32,12 @@ def cognito(route):
     username = (body.get("AuthParameters") or body.get("ChallengeResponses") or {}).get("USERNAME")
     if username is not None:
         assert re.fullmatch(r"\+55\d{10,11}", username), username      # DDD + number becomes +55...
+    if target == "ChangePassword":                                  # Configurações: the current one must be right
+        assert body["AccessToken"].startswith("access-"), body
+        if body["PreviousPassword"] != "Another-Password-9":
+            return route.fulfill(status=400, content_type="application/x-amz-json-1.1",
+                                 body=json.dumps({"__type": "NotAuthorizedException"}))
+        return route.fulfill(status=200, content_type="application/x-amz-json-1.1", body="{}")
     if target == "InitiateAuth" and body["AuthParameters"].get("PASSWORD") == "wrong":
         return route.fulfill(status=400, content_type="application/x-amz-json-1.1",
                              body=json.dumps({"__type": "NotAuthorizedException"}))
@@ -39,7 +45,8 @@ def cognito(route):
         response = {"ChallengeName": "NEW_PASSWORD_REQUIRED", "Session": "session-1"}
     else:
         token = f"token-u{username[3:]}-{NAMES[username[3:]]}"
-        response = {"AuthenticationResult": {"IdToken": token, "ExpiresIn": 3600, "RefreshToken": "r"}}
+        response = {"AuthenticationResult": {"IdToken": token, "AccessToken": f"access-{username[3:]}",
+                                             "ExpiresIn": 3600, "RefreshToken": "r"}}
     route.fulfill(status=200, content_type="application/x-amz-json-1.1", body=json.dumps(response))
 
 
@@ -305,8 +312,31 @@ def run():
         partner.click("text=‹ Casas")
         expect(partner.locator(".empty-state")).to_be_visible()
 
+        # Configurações: the name partners see, the default profit (a new house starts with it), the password
+        page.click("nav >> text=Configurações")
+        expect(page.locator("#s-name")).to_have_value("Ana Lima")                     # the login's name
+        expect(page.locator("#settings-data")).to_contain_text("(11) 98765-4321")
+        page.fill("#s-name", "Ana L. Souza")
+        page.click("#settings-data button[type=submit]")
+        expect(page.locator(".toast").last).to_contain_text("Dados salvos")
+        page.fill("#s-profit", "25")
+        page.click("#settings-defaults button[type=submit]")
+        expect(page.locator(".toast").last).to_contain_text("Padrões salvos")
+        page.fill("#p-current", "Wrong-Password-1")
+        page.fill("#p-new", "Third-Password-7")
+        page.fill("#p-again", "Third-Password-7")
+        page.click("#settings-password button[type=submit]")
+        expect(page.locator(".toast.error").last).to_contain_text("Senha atual incorreta")
+        errors[:] = [e for e in errors if "status of 400" not in e]                  # that 400 was on purpose
+        page.fill("#p-current", "Another-Password-9")
+        page.click("#settings-password button[type=submit]")
+        expect(page.locator(".toast").last).to_contain_text("Senha trocada")
+        expect(page.locator("#p-current")).to_have_value("")
+        page.click("nav >> text=Casas")
+
         # a house bought with a partner: the split is set when registering it, and the partner is invited
         page.locator(".empty-state button", has_text="Nova casa").click()
+        expect(page.locator("#h-profit")).to_have_value("25")                       # the default profit
         page.fill("#h-name", "Casa Verde")
         page.fill("#h-address", "Rua B, 2")
         page.fill("#h-price", "200.000")
@@ -331,6 +361,7 @@ def run():
         partner.click(".card.invite >> text=Aceitar")
         expect(partner.locator("h1")).to_contain_text("Casa Verde")
         partner.click("#tab-partners")
+        expect(partner.locator("#partners .members li").first).to_contain_text("Ana L. Souza")   # the name chosen
         expect(partner.locator("#by-member tbody tr").nth(1)).to_contain_text("Você")
         expect(partner.locator("#by-member tbody tr").nth(1)).to_contain_text("100.000,00")
         browser.close()

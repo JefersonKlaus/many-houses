@@ -39,6 +39,7 @@ MAX_PHOTO_BYTES = 8 * 1024 * 1024                   # like S3's form (s3_photos.
 LOCAL_OWNER = "local-user"                          # the user every request belongs to without login
 LOCAL_PHONE = "+5511999990000"                      # and their phone (the demo data has invites to it)
 LOCAL_NAME = "Carlos Lima"                          # and their name
+LOCAL_EMAIL = "carlos@example.com"                  # and their e-mail
 # Same as CloudFront's (infra/frontend.tf): if the site breaks with it, the test catches it before deploy.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
        "connect-src 'self' https://cognito-idp.sa-east-1.amazonaws.com; frame-ancestors 'none'; "
@@ -51,7 +52,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         """Plays the part of API Gateway's JWT authorizer: decides which user the request is from, and
         their phone (Cognito's ID token has it: the login is the phone)."""
         if not self.server.require_login:
-            return {"sub": LOCAL_OWNER, "phone_number": LOCAL_PHONE, "name": LOCAL_NAME}
+            return {"sub": LOCAL_OWNER, "phone_number": LOCAL_PHONE, "name": LOCAL_NAME, "email": LOCAL_EMAIL}
         authorization = self.headers.get("Authorization", "")
         if not authorization.startswith("Bearer token-"):
             return None

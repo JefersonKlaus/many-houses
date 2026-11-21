@@ -3,6 +3,7 @@
 PK = OWNER#<owner>   SK = HOUSE#<house id> | EXP#<house id>#<expense id> | INST#<house id>#<installment id>
                      | LINK#<house id>  (a house of another owner this user is a partner in)
                      | TL#<house id>#<entry id>  (the house's timeline)
+                     | PROFILE  (the user's settings)
 PK = PHONE#<phone>   SK = INVITE#<invite id>  (an invite waiting for whoever logs in with that phone)
 
 The item stores the whole object as JSON in the `data` attribute. One house's costs are one query
@@ -15,10 +16,11 @@ import json
 import time
 from typing import Any, Optional
 
-from ..domain.models import Expense, House, Installment, PendingInvite, TimelineEntry
+from ..domain.models import Expense, House, Installment, PendingInvite, Profile, TimelineEntry
 
 OWNER_PREFIX, HOUSE_PREFIX, EXPENSE_PREFIX, INSTALLMENT_PREFIX = "OWNER#", "HOUSE#", "EXP#", "INST#"
 LINK_PREFIX, PHONE_PREFIX, INVITE_PREFIX, TIMELINE_PREFIX = "LINK#", "PHONE#", "INVITE#", "TL#"
+PROFILE_KEY = "PROFILE"
 DATA_ATTRIBUTE = "data"
 BATCH_SIZE = 25                 # the most BatchWriteItem takes in one call
 BATCH_ATTEMPTS = 8
@@ -157,3 +159,11 @@ class DynamoRepository:
 
     def delete_timeline_entry(self, owner: str, house_id: str, id: str) -> None:
         self._delete(owner, f"{TIMELINE_PREFIX}{house_id}#{id}")
+
+    # -------------------------------------------------------------- settings
+    def get_profile(self, user: str) -> Optional[Profile]:
+        data = self._read(user, PROFILE_KEY)
+        return Profile.from_dict(data) if data else None
+
+    def save_profile(self, user: str, profile: Profile) -> None:
+        self._put(user, PROFILE_KEY, profile.to_dict())

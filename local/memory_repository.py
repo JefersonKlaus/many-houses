@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Optional
 
-from houses_core.domain.models import Expense, House, Installment, PendingInvite, TimelineEntry
+from houses_core.domain.models import Expense, House, Installment, PendingInvite, Profile, TimelineEntry
 
 
 class MemoryRepository:
@@ -15,7 +15,7 @@ class MemoryRepository:
 
     def _owner(self, owner: str) -> dict[str, Any]:
         with self._lock:
-            return self._data.setdefault(owner, {"houses": {}, "expenses": {}, "installments": {}, "links": {}, "timeline": {}})
+            return self._data.setdefault(owner, {"houses": {}, "expenses": {}, "installments": {}, "links": {}, "timeline": {}, "profile": None})
 
     def list_houses(self, owner: str) -> list[House]:
         return list(self._owner(owner)["houses"].values())
@@ -91,3 +91,9 @@ class MemoryRepository:
 
     def delete_timeline_entry(self, owner: str, house_id: str, id: str) -> None:
         self._owner(owner)["timeline"].pop((house_id, id), None)
+
+    def get_profile(self, user: str) -> Optional[Profile]:
+        return self._owner(user)["profile"]
+
+    def save_profile(self, user: str, profile: Profile) -> None:
+        self._owner(user)["profile"] = profile

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Mapping
 
-from houses_core.application import Access, check_house_limit, house_view, today
+from houses_core.application import Access, check_house_limit, house_view, today, user_name
 from houses_core.domain.errors import ValidationError
 from houses_core.domain.models import OWNER_MEMBER_ID, House, Installment, PendingInvite, bought_with_partners
 from houses_core.ports import Dependencies
@@ -18,6 +18,7 @@ from houses_core.ports import Dependencies
 
 def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phone: str = "",
                  name: str = "") -> dict[str, Any]:
+    name = user_name(deps.repo, user, name)
     house = replace(House.from_input(payload), owner_phone=phone, owner_name=name)
     invites, shares = bought_with_partners(payload, house.upfront_cents, phone, today())
     house = replace(house, invites=invites, purchase_shares=shares)

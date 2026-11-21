@@ -128,3 +128,31 @@ export function viewPhoto(url, title = "Foto") {
   const dialog = openDialog(title, h("img", { className: "photo-big", src: url, alt: title }),
     h("div", { className: "actions" }, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
 }
+
+const SVG = "http://www.w3.org/2000/svg";
+const EYE = "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
+const EYE_OFF = "M3 3l18 18 M10.6 5.1A10.7 10.7 0 0 1 12 5c7 0 11 7 11 7a18 18 0 0 1-3.2 4.1 M6.6 6.6A18 18 0 0 0 1 12s4 7 11 7a10.6 10.6 0 0 0 5.4-1.6 M9.9 9.9a3 3 0 0 0 4.2 4.2";
+
+/** A password input with an eye button that shows / hides what was typed. */
+export function revealable(input) {
+  const path = document.createElementNS(SVG, "path");
+  const icon = document.createElementNS(SVG, "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(path);
+  const toggle = h("button", { type: "button", className: "reveal", onclick: () => {
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    update();
+    input.focus();
+  } }, icon);
+  function update() {
+    const shown = input.type === "text";
+    path.setAttribute("d", shown ? EYE_OFF : EYE);
+    toggle.setAttribute("aria-label", shown ? "Ocultar senha" : "Mostrar senha");
+    toggle.title = shown ? "Ocultar senha" : "Mostrar senha";
+    toggle.setAttribute("aria-pressed", String(shown));
+  }
+  update();
+  return h("div", { className: "password-field" }, input, toggle);
+}

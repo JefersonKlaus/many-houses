@@ -316,3 +316,8 @@ dialog.dialog::backdrop { background: rgba(0, 0, 0, .4); }
     padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border); }
   dialog.dialog > .actions:last-child button { flex: 1; }
 }
+
+/* Configurações */
+.card.settings { max-width: 560px; }
+.card.settings h2 { margin-top: 0; }
+.card.settings dl { margin: 14px 0 4px; }

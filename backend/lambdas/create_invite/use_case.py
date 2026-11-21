@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Mapping
 
-from houses_core.application import Access, house_access, house_view, today, with_my_name
+from houses_core.application import Access, house_access, house_view, today, user_name, with_my_name
 from houses_core.domain.errors import ValidationError
 from houses_core.domain.models import MAX_PARTNERS, Invite, PendingInvite, new_id, phone_number
 from houses_core.ports import Dependencies
@@ -16,6 +16,7 @@ from houses_core.ports import Dependencies
 def create_invite(deps: Dependencies, user: str, house_id: str, payload: Mapping[str, Any],
                   phone: str = "", name: str = "") -> dict[str, Any]:
     access = house_access(deps.repo, user, house_id)
+    name = user_name(deps.repo, user, name)
     house = with_my_name(access, name)
     guest = phone_number(payload.get("phone"))
     if guest == phone:

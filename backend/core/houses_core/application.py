@@ -129,6 +129,12 @@ def members(house: House) -> list[dict[str, Any]]:
             + [{"id": i.id, "name": "", "phone": i.phone, "role": "invited"} for i in house.invites])
 
 
+def user_name(repo: Repository, user: str, login_name: str) -> str:
+    """The name the user chose in the settings or, without one, their login's (Cognito's `name`)."""
+    profile = repo.get_profile(user)
+    return (profile.name if profile and profile.name else "") or login_name
+
+
 def with_my_name(access: Access, name: str) -> House:
     """The house with the user's current name (it can change in their login): kept on each change they make."""
     house = access.house

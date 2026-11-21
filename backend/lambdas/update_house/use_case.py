@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Mapping
 
-from houses_core.application import (Access, check_removed_areas_have_no_costs, house_access, house_view,
+from houses_core.application import (Access, check_removed_areas_have_no_costs, house_access, house_view, user_name,
                                      with_my_name)
 from houses_core.domain.errors import ValidationError
 from houses_core.domain.models import House
@@ -17,7 +17,7 @@ from houses_core.ports import Dependencies
 def update_house(deps: Dependencies, user: str, id: str, payload: Mapping[str, Any], phone: str = "",
                  name: str = "") -> dict[str, Any]:
     access = house_access(deps.repo, user, id)
-    house = House.from_input(payload, id, previous=with_my_name(access, name))
+    house = House.from_input(payload, id, previous=with_my_name(access, user_name(deps.repo, user, name)))
     if access.is_owner and phone and not house.owner_phone:     # houses registered before phones were kept
         house = replace(house, owner_phone=phone)
     check_removed_areas_have_no_costs(deps.repo, access.owner, access.house, house)

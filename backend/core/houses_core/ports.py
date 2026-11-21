@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Protocol
 
-from .domain.models import Expense, House, Installment, PendingInvite, TimelineEntry
+from .domain.models import Expense, House, Installment, PendingInvite, Profile, TimelineEntry
 
 
 class Repository(Protocol):
@@ -29,6 +29,9 @@ class Repository(Protocol):
     def save_installments(self, owner: str, installments: list[Installment]) -> None:
         """Saves many at once (a whole payment plan): one call, not one per installment."""
     def delete_installments(self, owner: str, house_id: str, ids: list[str]) -> None: ...
+
+    def get_profile(self, user: str) -> Optional[Profile]: ...
+    def save_profile(self, user: str, profile: Profile) -> None: ...
 
     def list_timeline(self, owner: str, house_id: str) -> list[TimelineEntry]: ...
     def get_timeline_entry(self, owner: str, house_id: str, id: str) -> Optional[TimelineEntry]: ...
