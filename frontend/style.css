@@ -117,6 +117,30 @@ fieldset.choices legend { padding: 0; margin-bottom: 4px; font-size: .9rem; colo
 .bar-fill.area-top { background: var(--danger); }
 .bar-fill.area-none { background: var(--muted); opacity: .5; }
 .top-tag { color: var(--danger); font-weight: 600; }
+/* partners: invites on top of the list, the members, the invite form */
+.badge.partner { color: var(--brand); background: var(--brand-light); }
+.card.invite { border-color: var(--brand); background: var(--brand-light); }
+.card.invite p { margin: 0 0 6px; }
+.members { list-style: none; margin: 12px 0 0; padding: 0; }
+.members li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0;
+  border-top: 1px solid var(--border); }
+.members li.pending { color: var(--muted); }
+button.link.danger-link { padding: 4px 0; color: var(--danger); width: auto; }
+.invite-form { margin-top: 12px; }
+@media (max-width: 640px) {
+  /* how much each partner put in: one block per member, the total on the right, the parts below */
+  #by-member thead { display: none; }
+  #by-member tr { display: grid; grid-template-columns: 1fr auto; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  #by-member td { display: block; border: 0; padding: 1px 0; }
+  #by-member td:nth-child(1) { font-weight: 600; }
+  #by-member td:nth-child(5) { grid-column: 2; grid-row: 1; }
+  #by-member td:nth-child(2), #by-member td:nth-child(3), #by-member td:nth-child(4) {
+    grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: .85rem; color: var(--muted); }
+  #by-member td[data-label]::before { content: attr(data-label); }
+  #by-member td:nth-child(6) { display: none; }
+  #by-member tfoot tr { border-bottom: 0; }
+}
+.notice-warn { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; color: var(--warn); background: var(--warn-light); }
 /* the suggested sale price */
 .card.sale { border-color: var(--brand); background: var(--brand-light); }
 .sale-label { display: block; color: var(--brand); font-weight: 600; }

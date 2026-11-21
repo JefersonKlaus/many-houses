@@ -11,10 +11,11 @@ from api_gateway import ROUTES, dispatch
 from memory_repository import MemoryRepository
 
 
-def call(deps, method, path, body=None, query=None, owner="owner-a", base64_=False):
+def call(deps, method, path, body=None, query=None, owner="owner-a", base64_=False, phone=None):
     event = {"rawPath": path, "requestContext": {"http": {"method": method}}, "queryStringParameters": query}
     if owner is not None:
-        event["requestContext"]["authorizer"] = {"jwt": {"claims": {"sub": owner}}}
+        claims = {"sub": owner, **({"phone_number": phone} if phone else {})}
+        event["requestContext"]["authorizer"] = {"jwt": {"claims": claims}}
     if body is not None:
         text = body if isinstance(body, str) else json.dumps(body)
         event["body"] = base64.b64encode(text.encode()).decode() if base64_ else text
@@ -61,6 +62,36 @@ def test_full_flow(api):
     assert call(api, "DELETE", f"/houses/{hid}") == (204, None)
     assert call(api, "GET", f"/houses/{hid}")[0] == 404
     assert call(api, "GET", "/houses")[1] == []
+
+
+def test_partners_over_http(api):
+    """The phone comes from the token (Cognito's phone_number), never from the body; a partner gets 403
+    for what only the owner does."""
+    hid = call(api, "POST", "/houses", house_input(), phone="+5511911111111")[1]["house"]["id"]
+    status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "21922222222"}, phone="+5511911111111")
+    assert status == 201 and view["house"]["owner_phone"] == "+5511911111111"
+    assert call(api, "GET", "/invites", owner="owner-b") == (200, [])               # a login with no phone
+    status, (invite,) = call(api, "GET", "/invites", owner="owner-b", phone="+5521922222222")
+    assert status == 200 and invite["from_phone"] == "+5511911111111"
+    assert call(api, "POST", f"/invites/{invite['id']}/accept", {}, owner="owner-b",
+                phone="+5521922222222") == (200, {"house_id": hid})
+    status, view = call(api, "GET", f"/houses/{hid}", owner="owner-b")
+    assert status == 200 and view["role"] == "partner"
+    status, body = call(api, "DELETE", f"/houses/{hid}", owner="owner-b")
+    assert status == 403 and "dono" in body["error"]
+    partner = view["me"]
+    status, view = call(api, "PUT", f"/houses/{hid}/shares", {"shares": [{"member_id": partner, "cents": 100}]},
+                        owner="owner-b")
+    assert status == 200 and view["house"]["purchase_shares"] == [{"member_id": partner, "cents": 100}]
+    status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "31933333333"}, phone="+5511911111111")
+    invite_id = view["house"]["invites"][0]["id"]
+    assert call(api, "POST", f"/invites/{invite_id}/decline", {}, owner="owner-c", phone="+5531933333333") == (204, None)
+    status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "31933333333"}, phone="+5511911111111")
+    assert call(api, "DELETE", f"/houses/{hid}/invites/{view['house']['invites'][0]['id']}")[0] == 200
+    status, view = call(api, "DELETE", f"/houses/{hid}/partners/{partner}")
+    assert status == 400 and "pagamentos" in view["error"]                          # the share of the purchase
+    call(api, "PUT", f"/houses/{hid}/shares", {"shares": []})
+    assert call(api, "DELETE", f"/houses/{hid}/partners/{partner}")[1]["members"][1:] == []
 
 
 def test_validation_is_400_with_a_message(api):

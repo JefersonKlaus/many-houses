@@ -7,6 +7,7 @@ default mode, which has no login and opens with the demo data.
 
 The texts used in the selectors ("Entrar", "Salvar", ...) are the app's labels, which are in Portuguese."""
 import json
+import re
 import threading
 
 from playwright.sync_api import expect, sync_playwright
@@ -21,21 +22,33 @@ def url_of(server):
 
 
 def cognito(route):
-    """First access requires a new password, like a user created by the administrator."""
+    """First access requires a new password, like a user created by the administrator. The token is
+    "token-u<DDD + number>": the local server takes the login and its phone from it (local/server.py)."""
     target = route.request.headers["x-amz-target"].split(".")[-1]
     body = json.loads(route.request.post_data)
-    if target == "InitiateAuth" and "USERNAME" in body["AuthParameters"]:
-        assert body["AuthParameters"]["USERNAME"] == "+5511987654321"   # DDD + number becomes +55...
-    if target == "RespondToAuthChallenge":
-        assert body["ChallengeResponses"]["USERNAME"] == "+5511987654321"
+    username = (body.get("AuthParameters") or body.get("ChallengeResponses") or {}).get("USERNAME")
+    if username is not None:
+        assert re.fullmatch(r"\+55\d{10,11}", username), username      # DDD + number becomes +55...
     if target == "InitiateAuth" and body["AuthParameters"].get("PASSWORD") == "wrong":
         return route.fulfill(status=400, content_type="application/x-amz-json-1.1",
                              body=json.dumps({"__type": "NotAuthorizedException"}))
     if target == "InitiateAuth":
         response = {"ChallengeName": "NEW_PASSWORD_REQUIRED", "Session": "session-1"}
     else:
-        response = {"AuthenticationResult": {"IdToken": "token-user-1", "ExpiresIn": 3600, "RefreshToken": "r"}}
+        token = f"token-u{username[3:]}"
+        response = {"AuthenticationResult": {"IdToken": token, "ExpiresIn": 3600, "RefreshToken": "r"}}
     route.fulfill(status=200, content_type="application/x-amz-json-1.1", body=json.dumps(response))
+
+
+def log_in(page, phone):
+    """First access of `phone` (DDD + number): password, then the new password."""
+    page.fill("#l-phone", phone)
+    page.fill("#l-password", "Strong-Password-1")
+    page.click("text=Entrar")
+    expect(page.locator("text=Primeiro acesso")).to_be_visible()
+    page.fill("#l-password", "Another-Password-9")
+    page.click("text=Definir senha")
+    expect(page.locator("h1", has_text="Casas")).to_be_visible()
 
 
 def watch(page, errors):
@@ -108,7 +121,7 @@ def run():
         assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
 
         # the page is in tabs: Reforma is open; Compra has the purchase's data
-        expect(page.locator("[role=tab]")).to_have_text(["Reforma", "Compra", "Prestações (0/3)"])
+        expect(page.locator("[role=tab]")).to_have_text(["Reforma", "Compra", "Prestações (0/3)", "Sócios"])
         expect(page.locator("#tab-renovation")).to_have_attribute("aria-selected", "true")
         expect(page.locator("#areas")).to_be_visible()
         expect(page.locator("#purchase")).to_be_hidden()
@@ -195,10 +208,55 @@ def run():
         expect(page.locator("#portfolio")).to_contain_text("321.000,00")
         expect(page.locator(".list-item")).to_contain_text("vender por R$ 417.300,00")           # 321.000 + 30%
 
-        # deleting the house
+        # a partner: invited by phone, accepts on their own login and pays a cost; the owner sees who put in what
         page.locator(".list-item", has_text="Casa Azul").click()
+        page.click("#tab-partners")
+        expect(page.locator("#partners")).to_contain_text("Comprou esta casa com sócios?")
+        page.fill("#p-phone", "21922222222")
+        page.click("#partners button[type=submit]")
+        expect(page.locator("#partners .members")).to_contain_text("(21) 92222-2222")
+        expect(page.locator("#partners .members")).to_contain_text("aguardando")
+        partner = browser.new_page()                                # another browser: another login
+        watch(partner, errors)
+        partner.route("https://cognito-idp.sa-east-1.amazonaws.com/", cognito)
+        partner.goto(url_of(server))
+        log_in(partner, "21922222222")
+        expect(partner.locator(".card.invite")).to_contain_text("(11) 98765-4321 convidou você")
+        expect(partner.locator(".card.invite")).to_contain_text("Casa Azul")
+        partner.click(".card.invite >> text=Aceitar")
+        expect(partner.locator("h1")).to_contain_text("Casa Azul")
+        expect(partner.locator("text=Você é sócio. Dono")).to_be_visible()
+        expect(partner.locator("button.danger:has-text('Excluir')")).to_have_count(0)    # only the owner deletes
+        partner.click("text=Novo custo")
+        partner.fill("#e-description", "Azulejos")
+        partner.fill("#e-amount", "2.000")
+        expect(partner.locator("#e-paid-by option:checked")).to_have_text("Você")      # paid by whoever registers it
+        partner.click("dialog >> text=Salvar")
+        expect(partner.locator("#expenses tbody tr", has_text="Azulejos")).to_contain_text("pago por Você")
+
+        page.click("text=‹ Casas")
+        expect(page.locator(".list-item .badge.partner")).to_have_text("Com sócios")
+        page.locator(".list-item", has_text="Casa Azul").click()
+        expect(page.locator("#tab-partners")).to_have_text("Sócios (2)")              # the tab stayed open
+        rows = page.locator("#by-member tbody tr")
+        expect(rows).to_have_count(2)
+        expect(rows.nth(0)).to_contain_text("Você")
+        expect(rows.nth(0)).to_contain_text("161.000,00")      # entrada + costs 78.000, installment 80.000, cost 3.000
+        expect(rows.nth(1)).to_contain_text("(21) 92222-2222")
+        expect(rows.nth(1)).to_contain_text("2.000,00")
+        page.click("text=Dividir a compra")                     # the purchase (78.000) was paid half each
+        page.locator("dialog input").nth(0).fill("39.000")
+        page.locator("dialog input").nth(1).fill("39.000")
+        expect(page.locator("#s-sum")).to_contain_text("fecha")
+        page.click("dialog >> text=Salvar")
+        expect(rows.nth(1)).to_contain_text("41.000,00")       # 39.000 + 2.000
+        expect(rows.nth(0)).to_contain_text("122.000,00")
+
+        # deleting the house: it is gone for the partner too
         page.click("button.danger:has-text('Excluir')")
         expect(page.locator(".empty-state")).to_be_visible()
+        partner.click("text=‹ Casas")
+        expect(partner.locator(".empty-state")).to_be_visible()
         browser.close()
     server.shutdown()
     assert not errors, errors
@@ -222,11 +280,34 @@ def run_without_login():
         expect(page.locator("#areas li").first).to_contain_text("Telhado")
         expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Banheiros, Cozinha")
         expect(page.locator("#expenses tbody tr")).to_have_count(7)
+        expect(page.locator("#expenses tbody")).to_contain_text("pago por (11) 98888-7777")   # bought with a partner
         page.click("#tab-installments")
-        expect(page.locator("#installments tbody tr")).to_have_count(12)               # a page of a long plan
-        expect(page.locator("#installments .pager-page")).to_contain_text("de 10")
+        expect(page.locator("#installments tbody tr")).to_have_count(10)               # a page of a long plan
+        expect(page.locator("#installments .pager-page")).to_contain_text("de 12")
+        page.click("#tab-partners")
+        expect(page.locator("#by-member tbody tr")).to_have_count(2)
+        expect(page.locator("#by-member tbody tr").nth(1)).to_contain_text("93.600,00")   # half of the purchase
         width = page.evaluate("document.documentElement.scrollWidth")
         assert width <= 390, f"the page scrolls sideways on a phone ({width}px)"
+
+        # every list pages at 10: the 12 costs of a house in two pages
+        page.click("text=‹ Casas")
+        page.locator(".list-item", has_text="Casa da Rua das Flores").click()
+        page.click("#tab-renovation")
+        expect(page.locator("#expenses tbody tr")).to_have_count(10)
+        expect(page.locator("#panel-renovation .pager")).to_contain_text("1–10 de 12")
+        page.click("#panel-renovation [aria-label='Próxima página']")
+        expect(page.locator("#expenses tbody tr")).to_have_count(2)
+
+        # an invite waiting on top of the list: accepting it opens the house
+        page.click("text=‹ Casas")
+        expect(page.locator(".card.invite")).to_contain_text("(11) 98888-7777 convidou você")
+        page.click(".card.invite >> text=Aceitar")
+        expect(page.locator("h1")).to_contain_text("Casa Vila Rica")
+        expect(page.locator("text=Você é sócio. Dono")).to_be_visible()
+        page.click("text=‹ Casas")
+        expect(page.locator(".card.invite")).to_have_count(0)
+        expect(page.locator(".list-item")).to_have_count(5)
         browser.close()
     server.shutdown()
     assert not errors, errors

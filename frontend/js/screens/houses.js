@@ -1,10 +1,12 @@
 // Casas: every house with what it cost (purchase + renovation), and each house's page with its purchase
-// (price, entrada and the installments being paid), its renovation costs by category and the list of costs.
-// Every change answers the house's whole page, which is drawn at once: one request per change, never two.
+// (price, entrada and the installments being paid), its renovation costs by area and category, the list of
+// costs and, for a house bought with partners, how much each one put in. Invites to be a partner show up
+// on top of the list. Every change answers the house's whole page, which is drawn at once: one request
+// per change, never two.
 import { api } from "../api.js";
-import { actionsMenu, centsToText, formatDate, formatMoney, h, notify, openDialog, percent, percentText, render,
-  toCents, toPercent, today, whileDisabled } from "../util.js";
-import { pagedList } from "./paged-list.js";
+import { actionsMenu, centsToText, formatDate, formatMoney, formatPhone, h, notify, openDialog, percent, percentText,
+  render, toCents, toPercent, today, whileDisabled } from "../util.js";
+import { PAGE_SIZE, pagedList, pagedRows } from "./paged-list.js";
 
 // The API's codes, in the order the screen shows them (backend/core/houses_core/domain/models.py).
 const STATUS = { renovating: "Em reforma", ready: "Pronta", sold: "Vendida" };
@@ -16,8 +18,6 @@ const tile = (label, value, note) => h("div", {}, h("span", {}, label), h("stron
 // Offered as ready-made choices in the house form; any other area can be typed in.
 const AREA_SUGGESTIONS = ["Cozinha", "Banheiros", "Quartos", "Sala", "Área de serviço", "Telhado", "Fachada",
   "Quintal", "Elétrica", "Hidráulica", "Pisos", "Pintura"];
-
-const INSTALLMENTS_PAGE = 12;                   // a year of prestações per page
 
 /** "2026-01-31" -> "2026-02-28": a month later, the same day or the month's last day (like the backend). */
 function addMonth(iso) {
@@ -31,20 +31,23 @@ const badge = (status) => h("span", { className: `badge status-${status}` }, STA
 export async function mount(container) {
   // ------------------------------------------------------------------ every house
   async function list() {
-    let houses;
-    try { houses = await api("GET", "/houses"); }
+    let houses, invites;
+    try { [houses, invites] = await Promise.all([api("GET", "/houses"), api("GET", "/invites")]); }
     catch (error) { return render(container, h("p", { className: "notice" }, error.message)); }
     const sum = (key) => houses.reduce((total, x) => total + x.totals[key], 0);
     const row = (x) => h("li", { className: "list-item clickable", tabindex: 0, role: "button",
       onclick: () => detail(x.id), onkeydown: (e) => { if (e.key === "Enter") detail(x.id); } },
     h("div", { className: "list-main" },
-      h("div", { className: "list-title" }, h("strong", {}, x.name, badge(x.status)),
+      h("div", { className: "list-title" }, h("strong", {}, x.name, badge(x.status),
+        x.role === "partner" ? h("span", { className: "badge partner" }, "Sócio")
+          : x.partners.length > 0 && h("span", { className: "badge partner" }, "Com sócios")),
         h("strong", { className: "amount" }, formatMoney(x.totals.total_cents))),
       h("div", { className: "list-title muted" }, h("span", {}, x.address),
         h("span", {}, `compra ${formatMoney(x.totals.purchase_cents)} · reforma ${formatMoney(x.totals.renovation_cents)}`,
           x.target_profit_percent > 0 && x.status !== "sold" && ` · vender por ${formatMoney(x.totals.sale.suggested_price_cents)}`))),
     h("span", { className: "chevron", "aria-hidden": "true" }, "›"));
     render(container,
+      invites.map(inviteCard),
       h("div", { className: "row" }, h("h1", {}, "Casas", houses.length > 0 && h("span", { className: "count" }, ` (${houses.length})`)),
         h("button", { className: "primary", onclick: () => houseDialog(null, show) }, "Nova casa")),
       houses.length > 0 && h("div", { className: "totals", id: "portfolio" },
@@ -54,6 +57,30 @@ export async function mount(container) {
         h("p", { className: "muted" }, "Cadastre a primeira casa comprada e acompanhe os custos da reforma."),
         h("button", { className: "primary", onclick: () => houseDialog(null, show) }, "Nova casa"))
         : pagedList(houses, row, { label: "casas (nome ou endereço)", searchText: (x) => `${x.name} ${x.address}` }));
+  }
+
+  /** "(11) 98888-7777 convidou você para ser sócio da casa X": accept (it opens) or decline. */
+  function inviteCard(invite) {
+    const accept = h("button", { className: "primary small" }, "Aceitar");
+    const decline = h("button", { className: "secondary small" }, "Recusar");
+    accept.onclick = () => whileDisabled(accept, async () => {
+      try {
+        const { house_id } = await api("POST", `/invites/${invite.id}/accept`, {});
+        notify(`Agora você é sócio de "${invite.house_name}".`);
+        detail(house_id);
+      } catch (error) { notify(error.message, true); list(); }
+    });
+    decline.onclick = () => whileDisabled(decline, async () => {
+      if (!confirm(`Recusar o convite para a casa "${invite.house_name}"?`)) return;
+      try { await api("POST", `/invites/${invite.id}/decline`, {}); notify("Convite recusado."); }
+      catch (error) { notify(error.message, true); }
+      list();
+    });
+    return h("div", { className: "card invite", role: "status" },
+      h("p", {}, h("strong", {}, formatPhone(invite.from_phone) || "Alguém"),
+        " convidou você para ser sócio da casa ", h("strong", {}, `“${invite.house_name}”`), "."),
+      h("p", { className: "muted" }, "Aceitando, a casa aparece na sua lista e vocês lançam juntos os pagamentos."),
+      h("div", { className: "actions" }, accept, decline));
   }
 
   // ------------------------------------------------------------------ one house
@@ -66,9 +93,19 @@ export async function mount(container) {
   }
 
   /** Draws one house's page from what the API answered (GET /houses/{id} or any change to the house). */
+  // The house on screen: who its members are and who the user is among them (see show()).
+  let ctx = { members: [], me: "", role: "owner", shared: false };
+  /** A member's name on screen: "Você", or their phone. */
+  const memberName = (id) => {
+    if (id === ctx.me || (!id && ctx.role === "owner")) return "Você";
+    const member = ctx.members.find((m) => m.id === (id || ctx.members[0]?.id));
+    return member ? formatPhone(member.phone) || (member.role === "owner" ? "Dono" : "Sócio") : "";
+  };
+
   function show(view) {
     const { house, expenses, installments, totals } = view;
     const id = house.id;
+    ctx = { members: view.members, me: view.me, role: view.role, shared: view.members.length > 1 };
     const remove = async () => {
       const what = [`${expenses.length} custo(s)`, installments.length > 0 && `${installments.length} prestação(ões)`]
         .filter(Boolean).join(" e ");
@@ -79,10 +116,11 @@ export async function mount(container) {
     render(container,
       h("button", { className: "link back", onclick: list }, "‹ Casas"),
       h("div", { className: "row" },
-        h("div", {}, h("h1", {}, house.name, badge(house.status)), h("p", { className: "muted address" }, house.address)),
+        h("div", {}, h("h1", {}, house.name, badge(house.status)), h("p", { className: "muted address" }, house.address),
+          view.role === "partner" && h("p", { className: "muted" }, `Você é sócio. Dono: ${memberName(view.members[0].id)}`)),
         h("div", { className: "actions tight" },
           h("button", { className: "secondary", onclick: () => houseDialog(house, show) }, "Editar casa"),
-          h("button", { className: "danger", onclick: remove }, "Excluir"))),
+          view.role === "owner" && h("button", { className: "danger", onclick: remove }, "Excluir"))),
       h("div", { className: "totals", id: "house-totals" },
         tile("Compra", formatMoney(totals.purchase_cents)),
         tile("Reforma", formatMoney(totals.renovation_cents), `${totals.expense_count} custo(s)`),
@@ -94,6 +132,7 @@ export async function mount(container) {
         house.payment_type === "installments" && ["installments",
           `Prestações (${totals.payment.paid_count}/${totals.payment.installments_count})`,
           () => [installmentsCard(house, installments, totals.payment)]],
+        ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view)]],
       ]));
   }
 
@@ -172,7 +211,7 @@ export async function mount(container) {
       return card;
     }
     const now = today();
-    const change = (inst, changes, message) => async () => {
+    const change = (inst, changes, message) => async () => {     // marked as paid: by the user
       try { show(await api("PUT", `/houses/${house.id}/installments/${inst.id}`, { ...inst, ...changes })); notify(message); }
       catch (error) { notify(error.message, true); }
     };
@@ -182,7 +221,8 @@ export async function mount(container) {
       catch (error) { notify(error.message, true); }
     };
     const state = (inst) => inst.paid_date
-      ? [h("span", { className: "badge paid" }, "Paga"), h("small", { className: "muted paid-on" }, formatDate(inst.paid_date))]
+      ? [h("span", { className: "badge paid" }, "Paga"), h("small", { className: "muted paid-on" }, formatDate(inst.paid_date)),
+        ctx.shared && h("small", { className: "muted paid-on" }, memberName(inst.paid_by))]
       : inst.due_date < now ? h("span", { className: "badge overdue" }, "Atrasada")
         : h("span", { className: "badge open" }, "Em aberto");
     const rows = installments.map((inst, index) => {
@@ -191,27 +231,14 @@ export async function mount(container) {
         h("td", { title: n }, index + 1), h("td", {}, formatDate(inst.due_date)),
         h("td", { className: "num" }, formatMoney(inst.amount_cents)), h("td", {}, state(inst)),
         h("td", {}, actionsMenu(`prestação ${n}`, [
-          inst.paid_date ? { text: "Desmarcar pagamento", onclick: change(inst, { paid_date: "" }, "Pagamento desmarcado.") }
-            : { text: "Marcar como paga hoje", onclick: change(inst, { paid_date: now }, "Prestação paga.") },
+          inst.paid_date ? { text: "Desmarcar pagamento", onclick: change(inst, { paid_date: "", paid_by: "" }, "Pagamento desmarcado.") }
+            : { text: "Marcar como paga hoje", onclick: change(inst, { paid_date: now, paid_by: ctx.me }, "Prestação paga.") },
           { text: "Editar", onclick: () => installmentDialog(house, inst, n) },
           { text: "Excluir", danger: true, onclick: () => remove(inst, n) }])));
     });
 
-    const pages = Math.ceil(rows.length / INSTALLMENTS_PAGE);
-    const firstOpen = installments.findIndex((inst) => !inst.paid_date);
-    let page = Math.floor((firstOpen < 0 ? rows.length - 1 : firstOpen) / INSTALLMENTS_PAGE);
-    const body = h("tbody");
-    const pager = h("div", { className: "pager" });
-    const draw = () => {
-      render(body, rows.slice(page * INSTALLMENTS_PAGE, (page + 1) * INSTALLMENTS_PAGE));
-      render(pager, pages > 1 && [
-        h("button", { className: "secondary small", "aria-label": "Página anterior", disabled: page === 0,
-          onclick: () => { page -= 1; draw(); } }, "‹"),
-        h("span", { className: "pager-page" }, `${page + 1} de ${pages}`),
-        h("button", { className: "secondary small", "aria-label": "Próxima página", disabled: page === pages - 1,
-          onclick: () => { page += 1; draw(); } }, "›")]);
-    };
-    draw();
+    const firstOpen = installments.findIndex((inst) => !inst.paid_date);       // opens on the next one to pay
+    const [body, pager] = pagedRows(rows, { start: Math.floor((firstOpen < 0 ? rows.length - 1 : firstOpen) / PAGE_SIZE) });
 
     const progress = h("span", { className: "bar-fill paid-fill" });
     progress.style.width = `${((100 * payment.paid_count) / payment.installments_count).toFixed(1)}%`;   // CSSOM: allowed by the CSP
@@ -278,23 +305,146 @@ export async function mount(container) {
       try { show(await api("DELETE", `/houses/${house.id}/expenses/${e.id}`)); notify("Custo excluído."); }
       catch (error) { notify(error.message, true); }
     };
+    const rows = expenses.map((e) => h("tr", {},
+      h("td", {}, formatDate(e.date)),
+      h("td", {}, e.description, e.supplier && h("div", { className: "muted" }, e.supplier),
+        ctx.shared && h("div", { className: "muted paid-by" }, `pago por ${memberName(e.paid_by)}`)),
+      h("td", {}, CATEGORIES[e.category] || e.category,
+        e.area_id && h("div", { className: "muted" }, areaName(house, e.area_id))),
+      h("td", { className: "num" }, formatMoney(e.amount_cents)),
+      h("td", {}, actionsMenu(e.description, [
+        { text: "Editar", onclick: () => expenseDialog(house, e) },
+        { text: "Excluir", danger: true, onclick: () => remove(e) }]))));
+    const [body, pager] = pagedRows(rows);
     return h("div", { className: "card" },
       h("div", { className: "row" }, h("h2", {}, "Custos da reforma"), add),
       expenses.length === 0 ? h("p", { className: "muted" }, "Lance aqui cada compra de material, mão de obra ou serviço.")
-        : h("div", { className: "table-scroll" }, h("table", { className: "money", id: "expenses" },
+        : [h("div", { className: "table-scroll" }, h("table", { className: "money", id: "expenses" },
           h("thead", {}, h("tr", {}, ["Data", "Descrição", "Categoria", "Valor", ""].map((c) => h("th", { className: c === "Valor" ? "num" : null }, c)))),
-          h("tbody", {}, expenses.map((e) => h("tr", {},
-            h("td", {}, formatDate(e.date)),
-            h("td", {}, e.description, e.supplier && h("div", { className: "muted" }, e.supplier)),
-            h("td", {}, CATEGORIES[e.category] || e.category,
-              e.area_id && h("div", { className: "muted" }, areaName(house, e.area_id))),
-            h("td", { className: "num" }, formatMoney(e.amount_cents)),
-            h("td", {}, actionsMenu(e.description, [
-              { text: "Editar", onclick: () => expenseDialog(house, e) },
-              { text: "Excluir", danger: true, onclick: () => remove(e) }]))))),
-          h("tfoot", {}, h("tr", {}, h("td", { colSpan: 3 }, "Total da reforma"),
-            h("td", { className: "num" }, formatMoney(totals.renovation_cents)), h("td", {}))))));
+          body,
+          h("tfoot", {}, h("tr", {}, h("td", { colSpan: 3 }, `Total da reforma (${expenses.length})`),
+            h("td", { className: "num" }, formatMoney(totals.renovation_cents)), h("td", {}))))),
+        pager]);
   }
+
+  // ------------------------------------------------------------------ partners
+  /** The Sócios tab: how much each member put in (purchase, installments, renovation), the members and
+   *  the invites waiting for an answer; the owner invites by phone and removes partners. */
+  function partnersCard(view) {
+    const { house, totals } = view;
+    const owner = view.role === "owner";
+    const card = h("div", { className: "card", id: "partners" }, h("h2", {}, "Sócios"));
+    if (ctx.shared) {
+      const invested = totals.by_member.reduce((sum, r) => sum + r.total_cents, 0);
+      card.append(h("div", { className: "table-scroll" }, h("table", { className: "money", id: "by-member" },
+        h("thead", {}, h("tr", {}, ["Sócio", "Compra", "Prestações", "Reforma", "Total", ""].map((c, i) =>
+          h("th", { className: i > 0 && i < 5 ? "num" : null }, c)))),
+        // data-label: on a phone each member is a block, the label next to each amount (style.css)
+        h("tbody", {}, totals.by_member.map((r) => h("tr", {},
+          h("td", {}, memberName(r.member_id)),
+          h("td", { className: "num", "data-label": "Compra" }, formatMoney(r.purchase_cents)),
+          h("td", { className: "num", "data-label": "Prestações" }, formatMoney(r.installments_cents)),
+          h("td", { className: "num", "data-label": "Reforma" }, formatMoney(r.renovation_cents)),
+          h("td", { className: "num" }, h("strong", {}, formatMoney(r.total_cents))),
+          h("td", { className: "num muted" }, percent(r.total_cents, invested))))),
+        h("tfoot", {}, h("tr", {}, h("td", {}, "Total pago"),
+          ...[["purchase_cents", "Compra"], ["installments_cents", "Prestações"], ["renovation_cents", "Reforma"],
+            ["total_cents", null]].map(([k, label]) =>
+            h("td", { className: "num", "data-label": label }, formatMoney(totals.by_member.reduce((sum, r) => sum + r[k], 0)))),
+          h("td", {}))))));
+      const unassigned = totals.purchase_unassigned_cents;
+      if (unassigned !== 0) card.append(h("p", { className: "notice-warn" }, unassigned > 0
+          ? `${formatMoney(unassigned)} da compra ainda não foi dividido entre os sócios.`
+          : `A divisão da compra passa ${formatMoney(-unassigned)} do que foi pago na compra.`));
+      card.append(
+        h("div", { className: "actions" },
+          h("button", { className: "secondary small", onclick: () => sharesDialog(view) }, "Dividir a compra")),
+        h("p", { className: "muted hint" }, "Compra: o que cada um pagou na compra (entrada ou valor à vista, mais os custos). "
+          + "Prestações e reforma: o que cada um pagou, conforme o “pago por” de cada lançamento."));
+    } else {
+      card.append(h("p", { className: "muted" }, owner
+        ? "Comprou esta casa com sócios? Convide cada um pelo celular: o convite aparece para ele aceitar quando entrar no sistema."
+        : "Nenhum sócio."));
+    }
+
+    // the members and the invites waiting
+    const removePartner = async (member) => {
+      if (!confirm(`Remover ${memberName(member.id)} dos sócios desta casa?`)) return;
+      try { show(await api("DELETE", `/houses/${house.id}/partners/${member.id}`)); notify("Sócio removido."); }
+      catch (error) { notify(error.message, true); }
+    };
+    const cancelInvite = async (invite) => {
+      try { show(await api("DELETE", `/houses/${house.id}/invites/${invite.id}`)); notify("Convite cancelado."); }
+      catch (error) { notify(error.message, true); }
+    };
+    card.append(h("ul", { className: "members" },
+      ctx.shared && view.members.map((m) => h("li", {},
+        h("span", {}, memberName(m.id), m.id === ctx.me && m.phone && h("small", { className: "muted" }, ` ${formatPhone(m.phone)}`),
+          h("small", { className: "muted" }, m.role === "owner" ? " · dono" : " · sócio")),
+        owner && m.role === "partner" && h("button", { className: "link danger-link", onclick: () => removePartner(m) }, "Remover"))),
+      house.invites.map((invite) => h("li", { className: "pending" },
+        h("span", {}, formatPhone(invite.phone), h("small", { className: "muted" }, ` · convidado em ${formatDate(invite.date)}, aguardando`)),
+        owner && h("button", { className: "link danger-link", onclick: () => cancelInvite(invite) }, "Cancelar convite")))));
+
+    if (owner) {
+      const phone = h("input", { id: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "11987654321",
+        autocomplete: "off" });
+      const send = h("button", { className: "primary small", type: "submit" }, "Convidar");
+      const form = h("form", { className: "invite-form" },
+        h("label", { htmlFor: "p-phone" }, "Convidar sócio (celular: DDD + número)"),
+        h("div", { className: "inline-add" }, phone, send));
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        whileDisabled(send, async () => {
+          try {
+            show(await api("POST", `/houses/${house.id}/invites`, { phone: phone.value.trim() }));
+            notify("Convite enviado. Ele aparece para a pessoa quando ela entrar no sistema.");
+          } catch (error) { notify(error.message, true); }
+        });
+      });
+      card.append(form);
+    }
+    return card;
+  }
+
+  /** How much of the purchase each member paid: what was paid up front (entrada or cash price, plus costs). */
+  function sharesDialog(view) {
+    const { house, totals } = view;
+    const upfront = (house.payment_type === "installments" ? house.down_payment_cents : house.purchase_price_cents)
+      + house.purchase_costs_cents;
+    const current = Object.fromEntries(totals.by_member.map((r) => [r.member_id, r.purchase_cents]));
+    const inputs = view.members.map((m) => [m.id, h("input", { id: `s-${m.id}`, inputMode: "decimal", placeholder: "0,00",
+      value: current[m.id] ? centsToText(current[m.id]) : "" })]);
+    const sum = h("p", { className: "muted hint", id: "s-sum" });
+    const update = () => {
+      const values = inputs.map(([, input]) => toCents(input.value || "0"));
+      const total = values.every((v) => v !== null) ? values.reduce((a, b) => a + b, 0) : null;
+      sum.textContent = total === null ? "" : total === upfront ? "A divisão fecha com o total da compra."
+        : `Somando ${formatMoney(total)}: ${total < upfront ? "faltam" : "passam"} ${formatMoney(Math.abs(upfront - total))}.`;
+    };
+    inputs.forEach(([, input]) => input.addEventListener("input", update));
+    update();
+    const save = h("button", { className: "primary" }, "Salvar");
+    const dialog = openDialog("Quem pagou a compra",
+      h("p", { className: "muted" }, `Pago na compra: ${formatMoney(upfront)} `
+        + `(${house.payment_type === "installments" ? "entrada" : "valor à vista"} + custos da compra).`),
+      inputs.map(([id, input]) => field(input.id, memberName(id), input)),
+      sum,
+      h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+    save.addEventListener("click", () => whileDisabled(save, async () => {
+      try {
+        const shares = inputs.map(([id, input]) => ({ member_id: id, cents: cents(input, memberName(id), false) }));
+        show(await api("PUT", `/houses/${house.id}/shares`, { shares }));
+        notify("Divisão da compra salva.");
+        dialog.close();
+      } catch (error) { notify(error.message, true); }
+    }));
+    inputs[0][1].focus();
+  }
+
+  /** "Pago por": a select of the house's members (only when it has partners), the user first by default. */
+  const paidBySelect = (id, current) => ctx.shared
+    && select(id, ctx.members.map((m) => [m.id, memberName(m.id)]), current || ctx.me);
 
   // ------------------------------------------------------------------ forms
   /** `options`: {value: text}, or [[value, text], ...] when the order must be kept (ids that look like numbers). */
@@ -431,6 +581,7 @@ export async function mount(container) {
     const amount = h("input", { id: "e-amount", inputMode: "decimal", placeholder: "0,00",
       value: expense ? centsToText(expense.amount_cents) : "" });
     const area = select("e-area", [["", "Sem área"], ...house.areas.map((a) => [a.id, a.name])], expense?.area_id || "");
+    const paidBy = paidBySelect("e-paid-by", expense ? expense.paid_by || ctx.members[0].id : ctx.me);
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(expense ? "Editar custo" : `Novo custo: ${house.name}`,
       field("e-description", "Descrição", description),
@@ -439,11 +590,13 @@ export async function mount(container) {
         h("div", {}, field("e-amount", "Valor (R$)", amount)), h("div", {}, field("e-supplier", "Fornecedor (opcional)", supplier))),
       house.areas.length > 0 ? field("e-area", "Área da casa", area)
         : h("p", { className: "muted hint" }, "Para vincular o custo a uma área (cozinha, telhado…), marque as áreas em “Editar casa”."),
+      paidBy && field("e-paid-by", "Pago por", paidBy),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
         const body = { date: date.value, category: category.value, description: description.value,
-          supplier: supplier.value, amount_cents: cents(amount, "Valor"), area_id: area.value };
+          supplier: supplier.value, amount_cents: cents(amount, "Valor"), area_id: area.value,
+          paid_by: paidBy ? paidBy.value : "" };
         const view = expense ? await api("PUT", `/houses/${house.id}/expenses/${expense.id}`, body)
           : await api("POST", `/houses/${house.id}/expenses`, body);
         notify("Custo salvo.");
@@ -483,15 +636,18 @@ export async function mount(container) {
     const due = h("input", { id: "i-due", type: "date", value: inst.due_date });
     const amount = h("input", { id: "i-value", inputMode: "decimal", value: centsToText(inst.amount_cents) });
     const paid = h("input", { id: "i-paid", type: "date", value: inst.paid_date });
+    const paidBy = paidBySelect("i-paid-by", inst.paid_date ? inst.paid_by || ctx.members[0].id : ctx.me);
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(`Prestação ${n}`,
       h("div", { className: "two-columns" },
         h("div", {}, field("i-due", "Vencimento", due)), h("div", {}, field("i-value", "Valor (R$)", amount))),
       field("i-paid", "Paga em (vazio se ainda não foi paga)", paid),
+      paidBy && field("i-paid-by", "Paga por", paidBy),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
-        const body = { due_date: due.value, amount_cents: cents(amount, "Valor"), paid_date: paid.value };
+        const body = { due_date: due.value, amount_cents: cents(amount, "Valor"), paid_date: paid.value,
+          paid_by: paid.value && paidBy ? paidBy.value : "" };
         const view = await api("PUT", `/houses/${house.id}/installments/${inst.id}`, body);
         notify("Prestação salva.");
         dialog.close();

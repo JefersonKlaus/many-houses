@@ -1,15 +1,15 @@
-"""Use case (application layer): deletes an installment.
-Returns the house's page (application.house_view), so the screen redraws without another request.
+"""Use case (application layer): deletes an installment. The user is the house's owner or one of its partners (application.house_access). Answers the house's page (application.house_view).
 Depends only on the core's domain and ports, never on AWS."""
 from __future__ import annotations
 
 from typing import Any
 
-from houses_core.application import get_house, get_installment, house_view
+from houses_core.application import get_installment, house_access, house_view
 from houses_core.ports import Dependencies
 
 
-def delete_installment(deps: Dependencies, owner: str, house_id: str, id: str) -> dict[str, Any]:
-    get_installment(deps.repo, owner, house_id, id)
-    deps.repo.delete_installments(owner, house_id, [id])
-    return house_view(deps.repo, owner, get_house(deps.repo, owner, house_id))
+def delete_installment(deps: Dependencies, user: str, house_id: str, id: str) -> dict[str, Any]:
+    access = house_access(deps.repo, user, house_id)
+    get_installment(deps.repo, access, id)
+    deps.repo.delete_installments(access.owner, house_id, [id])
+    return house_view(deps.repo, access)

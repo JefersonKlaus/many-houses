@@ -1,10 +1,12 @@
 """Application rules that more than one use case applies. They only go through the ports."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from .domain.errors import NotFound, ValidationError
-from .domain.models import EXPENSE_CATEGORIES, Expense, House, Installment
+from .domain.errors import Forbidden, NotFound, ValidationError
+from .domain.models import EXPENSE_CATEGORIES, OWNER_MEMBER_ID, Expense, House, Installment
 from .ports import Repository
 
 MAX_HOUSES = 500
@@ -12,24 +14,54 @@ MAX_EXPENSES_PER_HOUSE = 2000
 MAX_INSTALLMENTS_PER_HOUSE = 600
 
 
-def get_house(repo: Repository, owner: str, id: Any) -> House:
-    house = repo.get_house(owner, id) if isinstance(id, str) else None
-    if house is None:
+def today() -> str:
+    """Today in Brasília (UTC-3 all year), "YYYY-MM-DD", like the screens' today()."""
+    return (datetime.now(timezone.utc) - timedelta(hours=3)).date().isoformat()
+
+
+@dataclass(frozen=True)
+class Access:
+    """A user's access to a house: `owner` is whose data it is kept in (the house's owner), `member_id`
+    is who the user is in it (OWNER_MEMBER_ID for the owner, the partner's id for a partner)."""
+    owner: str
+    house: House
+    member_id: str
+
+    @property
+    def is_owner(self) -> bool:
+        return self.member_id == OWNER_MEMBER_ID
+
+
+def house_access(repo: Repository, user: str, id: Any) -> Access:
+    """The user's own house, or a house they are a partner in. Anything else: not found (whoever is not
+    in a house doesn't even learn that it exists)."""
+    if not isinstance(id, str):
         raise NotFound("casa não encontrada")
-    return house
+    house = repo.get_house(user, id)
+    if house is not None:
+        return Access(user, house, OWNER_MEMBER_ID)
+    owner = repo.get_link(user, id)
+    house = repo.get_house(owner, id) if owner else None
+    partner = next((p for p in house.partners if p.user == user), None) if house else None
+    if partner is None:
+        raise NotFound("casa não encontrada")
+    return Access(owner, house, partner.id)
 
 
-def get_expense(repo: Repository, owner: str, house_id: Any, id: Any) -> Expense:
-    get_house(repo, owner, house_id)
-    expense = repo.get_expense(owner, house_id, id) if isinstance(id, str) else None
+def require_owner(access: Access, action: str) -> None:
+    if not access.is_owner:
+        raise Forbidden(f"só o dono da casa pode {action}")
+
+
+def get_expense(repo: Repository, access: Access, id: Any) -> Expense:
+    expense = repo.get_expense(access.owner, access.house.id, id) if isinstance(id, str) else None
     if expense is None:
         raise NotFound("custo não encontrado")
     return expense
 
 
-def get_installment(repo: Repository, owner: str, house_id: Any, id: Any) -> Installment:
-    get_house(repo, owner, house_id)
-    installment = repo.get_installment(owner, house_id, id) if isinstance(id, str) else None
+def get_installment(repo: Repository, access: Access, id: Any) -> Installment:
+    installment = repo.get_installment(access.owner, access.house.id, id) if isinstance(id, str) else None
     if installment is None:
         raise NotFound("prestação não encontrada")
     return installment
@@ -48,6 +80,11 @@ def check_expense_limit(repo: Repository, owner: str, house_id: str) -> None:
 def check_expense_area(house: House, expense: Expense) -> None:
     if expense.area_id and expense.area_id not in {a.id for a in house.areas}:
         raise ValidationError("área: escolha uma das áreas da casa")
+
+
+def check_member(house: House, member_id: str) -> None:
+    if member_id and member_id not in house.member_ids:
+        raise ValidationError("pago por: escolha um dos sócios da casa")
 
 
 def check_removed_areas_have_no_costs(repo: Repository, owner: str, before: House, after: House) -> None:
@@ -86,10 +123,18 @@ def sorted_installments(installments: Iterable[Installment]) -> list[Installment
     return sorted(installments, key=lambda i: (i.due_date, i.id))
 
 
+def members(house: House) -> list[dict[str, Any]]:
+    """The owner first, then the partners: how the screens list and name them."""
+    return ([{"id": OWNER_MEMBER_ID, "phone": house.owner_phone, "role": "owner"}]
+            + [{"id": p.id, "phone": p.phone, "role": "partner"} for p in house.partners])
+
+
 def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Installment] = ()) -> dict[str, Any]:
     """What a house cost: the purchase (price + its costs), the renovation (by category and by area)
     and the sum. `payment`: how the price is being paid, the entrada plus the installments paid and open.
-    `by_area`: each of the house's areas, in its order, with its costs; `no_area_cents`: costs with no area."""
+    `by_area`: each of the house's areas, in its order, with its costs; `no_area_cents`: costs with no area.
+    `by_member`: what each member put in so far (see `by_member`)."""
+    expenses, installments = list(expenses), list(installments)
     by_category = dict.fromkeys(EXPENSE_CATEGORIES, 0)
     by_area = {a.id: {"id": a.id, "name": a.name, "cents": 0, "count": 0} for a in house.areas}
     no_area = count = 0
@@ -106,7 +151,33 @@ def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Ins
             "total_cents": house.purchase_total_cents + renovation, "expense_count": count,
             "by_category": by_category, "by_area": list(by_area.values()), "no_area_cents": no_area,
             "payment": payment(house, installments),
-            "sale": sale(house, house.purchase_total_cents + renovation)}
+            "sale": sale(house, house.purchase_total_cents + renovation),
+            **by_member(house, expenses, installments)}
+
+
+def by_member(house: House, expenses: list[Expense], installments: list[Installment]) -> dict[str, Any]:
+    """How much each member actually put into the house so far: their share of the purchase (what was
+    paid up front), the installments they paid and the renovation costs they paid. A record with no
+    `paid_by` (or of a partner no longer in the house) counts for the owner. `purchase_unassigned_cents`:
+    what was paid up front that the shares don't cover yet (negative: the shares add up to more)."""
+    ids = house.member_ids
+    rows = {m: {"member_id": m, "purchase_cents": 0, "installments_cents": 0, "renovation_cents": 0} for m in ids}
+    who = lambda member_id: member_id if member_id in rows else OWNER_MEMBER_ID  # noqa: E731
+    if house.purchase_shares:
+        for share in house.purchase_shares:
+            rows[who(share.member_id)]["purchase_cents"] += share.cents
+        unassigned = house.upfront_cents - sum(s.cents for s in house.purchase_shares)
+    else:
+        rows[OWNER_MEMBER_ID]["purchase_cents"] = house.upfront_cents
+        unassigned = 0
+    for i in installments:
+        if i.paid:
+            rows[who(i.paid_by)]["installments_cents"] += i.amount_cents
+    for e in expenses:
+        rows[who(e.paid_by)]["renovation_cents"] += e.amount_cents
+    for row in rows.values():
+        row["total_cents"] = row["purchase_cents"] + row["installments_cents"] + row["renovation_cents"]
+    return {"by_member": list(rows.values()), "purchase_unassigned_cents": unassigned}
 
 
 def sale(house: House, invested_cents: int) -> dict[str, Any]:
@@ -129,12 +200,24 @@ def payment(house: House, installments: Iterable[Installment]) -> dict[str, Any]
             "total_paid_cents": house.down_payment_cents + paid_cents}
 
 
-def house_view(repo: Repository, owner: str, house: House) -> dict[str, Any]:
-    """One house's page: the house, its costs (newest first), its installments (in due order) and the totals.
-    GET /houses/{id} answers this, and so does every change to a house, so the screen redraws at once,
-    without a second request."""
-    expenses = sorted_expenses(repo.list_expenses(owner, house.id))
-    installments = sorted_installments(repo.list_installments(owner, house.id))
-    return {"house": house.to_dict(), "expenses": [e.to_dict() for e in expenses],
+def public_house(house: House) -> dict[str, Any]:
+    """The house as the screens get it: the partners' logins (`user`) are not shown, only their phones."""
+    data = house.to_dict()
+    data["partners"] = [{"id": p.id, "phone": p.phone} for p in house.partners]
+    for key in ("areas", "invites", "purchase_shares"):        # lists, as in the JSON the screens get
+        data[key] = list(data[key])
+    return data
+
+
+def house_view(repo: Repository, access: Access) -> dict[str, Any]:
+    """One house's page: the house, its members, its costs (newest first), its installments (in due
+    order) and the totals. GET /houses/{id} answers this, and so does every change to a house, so the
+    screen redraws at once, without a second request. `me`: who the user is among the members."""
+    house = access.house
+    expenses = sorted_expenses(repo.list_expenses(access.owner, house.id))
+    installments = sorted_installments(repo.list_installments(access.owner, house.id))
+    return {"house": public_house(house), "members": members(house),
+            "me": access.member_id, "role": "owner" if access.is_owner else "partner",
+            "expenses": [e.to_dict() for e in expenses],
             "installments": [i.to_dict() for i in installments],
             "totals": totals(house, expenses, installments)}

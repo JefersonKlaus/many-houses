@@ -5,7 +5,8 @@ Manages houses bought to be renovated, serverless on AWS. For each house: what i
 marked when paid) and every renovation cost (material, labor, services, project, other), each one
 linked to the area of the house it went to (kitchen, roof...), with the totals per house, per
 category, per area (which part costs the most) and for all houses together. Given the profit wanted
-(%), it tells for how much to sell each house today, as it is.
+(%), it tells for how much to sell each house today, as it is. A house bought with partners is
+shared with them (invited by phone), and the app shows how much each one put in.
 
 The app's screens are in Brazilian Portuguese; code and docs are in English.
 
@@ -85,7 +86,9 @@ backend/
     adapters/        DynamoDB, API Gateway input (login, ids, errors)
   lambdas/<action>/  list_houses, get_house, create_house, update_house, delete_house,
                      create_expense, update_expense, delete_expense,
-                     create_installments, update_installment, delete_installment
+                     create_installments, update_installment, delete_installment,
+                     create_invite, delete_invite, list_invites, accept_invite, decline_invite,
+                     remove_partner, update_shares
     use_case.py      the action (only domain + ports, never AWS)
     handler.py       API Gateway event -> use case -> HTTP response
     lambda.json      {"route": "POST /houses", "database": "write"}
@@ -99,7 +102,11 @@ backend/
 | `POST /houses/{id}/expenses` | add a renovation cost |
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
 | `POST /houses/{id}/installments` | add N monthly installments at once (`count`, `amount_cents`, `first_due_date`) |
-| `PUT` · `DELETE /houses/{id}/installments/{installment_id}` | change (or mark as paid: `paid_date`), delete an installment |
+| `PUT` · `DELETE /houses/{id}/installments/{installment_id}` | change (or mark as paid: `paid_date`, `paid_by`), delete an installment |
+| `POST /houses/{id}/invites` · `DELETE /houses/{id}/invites/{invite_id}` | invite a partner by phone, cancel an invite (owner only) |
+| `GET /invites` · `POST /invites/{id}/accept` · `POST /invites/{id}/decline` | the invites sent to the login's phone; accept, decline one |
+| `DELETE /houses/{id}/partners/{partner_id}` | remove a partner with nothing paid registered (owner only) |
+| `PUT /houses/{id}/shares` | how much of the purchase each member paid (`shares`: `member_id`, `cents`) |
 
 Every change to a house (all but `DELETE /houses/{id}`) answers the same thing as `GET /houses/{id}`:
 the screen draws the house's page from that answer, with no second request.
@@ -109,7 +116,13 @@ creates the function, the route and the logs. Lambdas marked `"read"` can only r
 
 Rules worth knowing:
 
-- The owner comes from the login token (`sub`), never from the request: each login sees only its houses.
+- The user comes from the login token (`sub`, and `phone_number` for invites), never from the request:
+  each login sees only its houses and the ones it is a partner in.
+- Partners: the owner invites by phone; the invite waits under that phone (even before that person
+  has a login) and shows on top of their list to accept or decline. A partner sees and changes
+  everything in the house except deleting it and inviting or removing partners (403). Each cost and
+  paid installment has `paid_by` (a member; empty = the owner; by default whoever registers it);
+  with the purchase shares, `totals.by_member` says how much each one put in.
 - The login is the phone: the screen takes DDD + number (digits only) and sends `+55<digits>` to Cognito.
 - Money is always integer cents (`purchase_price_cents`, `amount_cents`...), never a float.
 - Purchase = price + purchase costs. Total invested = purchase + every renovation cost.
@@ -120,9 +133,13 @@ Rules worth knowing:
 - A house lists the areas that need renovation (`areas`: the names; the API gives each an id, kept
   while the name is the same, ignoring case). A cost may be linked to one (`area_id`). An area with
   costs can't be removed until they move to another area or to none.
-- Deleting a house deletes its costs and installments first, so no orphan is left behind.
-- DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>`, `EXP#<house id>#<id>` or
-  `INST#<house id>#<id>`. A payment plan is written with `BatchWriteItem`, 25 items per call.
+- Deleting a house deletes its costs, installments, partners' links and pending invites first, so no
+  orphan is left behind.
+- DynamoDB, one table: `PK = OWNER#<user>`, `SK = HOUSE#<id>`, `EXP#<house id>#<id>`,
+  `INST#<house id>#<id>` or `LINK#<house id>` (a partner's link to the owner's house, which stays in
+  the owner's partition); `PK = PHONE#<phone>`, `SK = INVITE#<id>` for the invites waiting. A payment
+  plan is written with `BatchWriteItem`, 25 items per call.
+- Every list and table shows 10 rows a page.
 
 ### Local
 

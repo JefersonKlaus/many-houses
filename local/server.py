@@ -12,9 +12,11 @@ it, since it has no authentication. The deployed app is not affected: there, API
 requires a valid Cognito token for every request.
 
 `start(require_login=True)` is used by local/e2e.py to test the login screen: the site then logs in
-through Cognito (which the test simulates) and the server accepts the simulated tokens."""
+through Cognito (which the test simulates) and the server accepts the simulated tokens: "token-<user>",
+and when <user> is "u" + DDD + number ("u11987654321"), that is the login's phone (to test invites)."""
 import argparse
 import os
+import re
 import sys
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +32,7 @@ from memory_repository import MemoryRepository     # noqa: E402
 from seed import seed as load_demo_data             # noqa: E402
 
 LOCAL_OWNER = "local-user"                          # the user every request belongs to without login
+LOCAL_PHONE = "+5511999990000"                      # and their phone (the demo data has invites to it)
 # Same as CloudFront's (infra/frontend.tf): if the site breaks with it, the test catches it before deploy.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self' https://cognito-idp.sa-east-1.amazonaws.com; frame-ancestors 'none'; "
@@ -38,21 +41,26 @@ CONTENT_TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascri
 
 
 class RequestHandler(BaseHTTPRequestHandler):
-    def _owner(self):
-        """Plays the part of API Gateway's JWT authorizer: decides which user the request is from."""
+    def _claims(self):
+        """Plays the part of API Gateway's JWT authorizer: decides which user the request is from, and
+        their phone (Cognito's ID token has it: the login is the phone)."""
         if not self.server.require_login:
-            return LOCAL_OWNER
+            return {"sub": LOCAL_OWNER, "phone_number": LOCAL_PHONE}
         authorization = self.headers.get("Authorization", "")
-        return authorization[len("Bearer token-"):] if authorization.startswith("Bearer token-") else None
+        if not authorization.startswith("Bearer token-"):
+            return None
+        user = authorization[len("Bearer token-"):]
+        phone = re.fullmatch(r"u(\d{10,11})", user)
+        return {"sub": user, **({"phone_number": f"+55{phone[1]}"} if phone else {})}
 
     def _api(self):
         url = urlparse(self.path)
         event = {"rawPath": url.path[len("/api"):], "requestContext": {"http": {"method": self.command}},
                  "queryStringParameters": {k: v[0] for k, v in parse_qs(url.query).items()} or None,
                  "body": self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()}
-        owner = self._owner()
-        if owner:
-            event["requestContext"]["authorizer"] = {"jwt": {"claims": {"sub": owner}}}
+        claims = self._claims()
+        if claims:
+            event["requestContext"]["authorizer"] = {"jwt": {"claims": claims}}
         response = dispatch(event, self.server.deps)
         body = response["body"].encode()
         self.send_response(response["statusCode"])
@@ -105,7 +113,7 @@ def start(port=8765, require_login=False, demo_data=False):
     server.require_login = require_login
     server.deps = Dependencies(MemoryRepository())
     if demo_data:
-        load_demo_data(server.deps, LOCAL_OWNER, date.today())
+        load_demo_data(server.deps, LOCAL_OWNER, date.today(), LOCAL_PHONE)
     return server
 
 

@@ -1,0 +1,4 @@
+{
+  "route": "GET /invites",
+  "database": "read"
+}

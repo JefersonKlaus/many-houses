@@ -2,14 +2,18 @@
 different stages (one being renovated, one ready, one sold, one just bought) with their renovation costs.
 Two of them were bought in installments: an entrada and monthly prestações, the ones already due are paid.
 Each house has the areas that needed renovation, and most costs are linked to one of them.
+The Sobrado was bought with a partner (each one paid part of it), and another partner sent an invite
+for one of their houses, waiting to be accepted.
 
 Dates are relative to today, so the data always looks recent. Only used by `python local/server.py`
 (and `python dev.py serve`); the tests start from an empty database."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
-from houses_core.domain.models import Area, Expense, House, Installment, add_months, new_id
+from houses_core.domain.models import (OWNER_MEMBER_ID, Area, Expense, House, Installment, Invite, Partner,
+                                       PendingInvite, Share, add_months, new_id)
 from houses_core.ports import Dependencies
 
 R = 100     # R$ 1,00 in cents
@@ -26,6 +30,9 @@ HOUSES = [  # name, address, bought N days ago, price, purchase costs, status, n
          (120, "material", "Louças e metais dos banheiros", "Leroy Merlin", 7_650 * R),
          (110, "services", "Instalação elétrica nova", "Eletricista Marcos", 5_400 * R),
          (90, "labor", "Pintura interna e externa", "Pinturas Silva", 7_200 * R),
+         (85, "services", "Limpeza de calhas e telhado", "Telhados Andrade", 900 * R),
+         (80, "material", "Portas internas", "Madeireira Central", 3_200 * R),
+         (75, "other", "Paisagismo do jardim", "Verde Vivo", 1_850 * R),     # 12 costs: two pages
      ]),
     ("Apartamento Centro 302", "Av. Brasil, 455, ap. 302 - Centro, Campinas/SP", 120, 290_000 * R, 17_400 * R,
      "ready", "", [
@@ -84,7 +91,13 @@ PLANS = {  # house name: entrada, number of monthly installments, each one's amo
 }
 
 
-def seed(deps: Dependencies, owner: str, today: date) -> None:
+PARTNER_USER, PARTNER_PHONE = "demo-partner", "+5511988887777"
+PARTNER_ID = "5a5a5a5a"
+SHARED = "Sobrado Vila Nova"
+PAID_BY_PARTNER = {"Retirada do telhado antigo", "Madeiramento e telhas", "Montagem do telhado novo"}
+
+
+def seed(deps: Dependencies, owner: str, today: date, phone: str = "") -> None:
     for name, address, days_ago, price, costs, status, notes, expenses in HOUSES:
         bought = (today - timedelta(days=days_ago)).isoformat()
         down_payment, count, amount = PLANS.get(name, (0, 0, 0))
@@ -92,13 +105,37 @@ def seed(deps: Dependencies, owner: str, today: date) -> None:
         area_of = {description: areas[area].id for area, descriptions in AREAS.get(name, {}).items()
                    for description in descriptions}
         house = House(new_id(), name, address, bought, price, costs, status, notes, down_payment,
-                      "installments" if count else "cash", TARGET_PROFIT.get(name, 30), tuple(areas.values()))
+                      "installments" if count else "cash", TARGET_PROFIT.get(name, 30), tuple(areas.values()),
+                      phone)
+        shared = name == SHARED
+        if shared:      # bought with a partner: the entrada + costs (R$ 187.200) split in half
+            half = house.upfront_cents // 2
+            house = replace(house, partners=(Partner(PARTNER_ID, PARTNER_USER, PARTNER_PHONE),),
+                            purchase_shares=(Share(OWNER_MEMBER_ID, house.upfront_cents - half), Share(PARTNER_ID, half)))
+            deps.repo.save_link(PARTNER_USER, owner, house.id)
         deps.repo.save_house(owner, house)
         first_due = add_months(bought, 1)
-        installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "")
-                        for due in (add_months(first_due, n) for n in range(count))]
+        dues = [add_months(first_due, n) for n in range(count)]
+        installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "",
+                                    (PARTNER_ID if shared and n % 2 else OWNER_MEMBER_ID) if due <= today.isoformat() else "")
+                        for n, due in enumerate(dues)]
         deps.repo.save_installments(owner, installments)
         for ago, category, description, supplier, amount in expenses:
             deps.repo.save_expense(owner, Expense(new_id(), house.id, (today - timedelta(days=ago)).isoformat(),
                                                   category, description, amount, supplier,
-                                                  area_of.get(description, "")))
+                                                  area_of.get(description, ""),
+                                                  PARTNER_ID if shared and description in PAID_BY_PARTNER else ""))
+    invite_waiting(deps, today, phone)
+
+
+def invite_waiting(deps: Dependencies, today: date, phone: str) -> None:
+    """A house of the demo partner, with an invite to `phone` (the local user) not answered yet."""
+    if not phone:
+        return
+    invite = Invite(new_id(), phone, today.isoformat())
+    house = House(new_id(), "Casa Vila Rica", "Rua Ipê, 45 - Vila Rica, Campinas/SP",
+                  (today - timedelta(days=20)).isoformat(), 410_000 * R, 24_600 * R, "renovating", "",
+                  0, "cash", 25, (Area(new_id(), "Cozinha"),), PARTNER_PHONE, (), (invite,))
+    deps.repo.save_house(PARTNER_USER, house)
+    deps.repo.save_pending_invite(PendingInvite(invite.id, phone, PARTNER_USER, house.id, house.name,
+                                                PARTNER_PHONE, invite.date))

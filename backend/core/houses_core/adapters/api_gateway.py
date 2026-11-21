@@ -22,6 +22,7 @@ class Request:
     body: dict[str, Any]
     query: dict[str, str]
     path: dict[str, str]                # the {...} in the route: {"id": <house>, "expense_id": ...}
+    phone: str = ""                     # the login's phone ("+55..."), from the same token; "" if it has none
 
     @property
     def id(self) -> Optional[str]:
@@ -43,7 +44,7 @@ def endpoint(action: Action, *, status: int = 200) -> Handle:
                 return response(404, {"error": "não encontrado"})
             method = event["requestContext"]["http"]["method"]
             request = Request(owner, _body(event) if method in ("POST", "PUT") else {},
-                              event.get("queryStringParameters") or {}, dict(path))
+                              event.get("queryStringParameters") or {}, dict(path), _phone(event))
             result = action(deps, request)
             return response(status, None if status == 204 else result)
         except PermissionError:
@@ -71,6 +72,13 @@ def _owner(event: dict[str, Any]) -> str:
     if not isinstance(owner, str) or not owner:
         raise PermissionError
     return owner
+
+
+def _phone(event: dict[str, Any]) -> str:
+    """The login's verified phone (`phone_number` in the ID token): invites are sent to a phone."""
+    claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
+    phone = claims.get("phone_number", "")
+    return phone if isinstance(phone, str) and phone.startswith("+") else ""
 
 
 def _body(event: dict[str, Any]) -> dict[str, Any]:

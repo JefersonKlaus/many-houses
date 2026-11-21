@@ -22,6 +22,9 @@ HOUSE_STATUSES = ("renovating", "ready", "sold")                         # em re
 PAYMENT_TYPES = ("cash", "installments")                                  # à vista, parcelado
 MAX_PROFIT_PERCENT = 1000
 MAX_AREAS = 30
+MAX_PARTNERS = 10
+OWNER_MEMBER_ID = "00000000"    # the house's owner among its members (in `paid_by` and in the purchase shares)
+_PHONE_RE = re.compile(r"^[1-9]{2}\d{8,9}$")
 MAX_AREA_NAME = 40
 EXPENSE_CATEGORIES = ("material", "labor", "services", "project", "other")  # material, mão de obra, serviços,
                                                                           # projeto e documentação, outros
@@ -34,7 +37,8 @@ FIELD_LABELS = {
     "description": "descrição", "supplier": "fornecedor", "amount_cents": "valor",
     "down_payment_cents": "entrada", "due_date": "vencimento", "paid_date": "data do pagamento",
     "first_due_date": "primeiro vencimento", "count": "quantidade", "payment_type": "forma de pagamento",
-    "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área",
+    "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área", "paid_by": "pago por",
+    "phone": "celular",
 }
 
 
@@ -95,6 +99,21 @@ def _percent(payload: Mapping[str, Any], field: str) -> float:
     return int(rounded) if rounded.is_integer() else rounded
 
 
+def phone_number(value: Any) -> str:
+    """"11987654321" (DDD + number, digits only, like the login screen) -> "+5511987654321"."""
+    if not isinstance(value, str) or not _PHONE_RE.match(value.strip()):
+        raise ValidationError("celular: digite DDD + número, só os dígitos")
+    return f"+55{value.strip()}"
+
+
+def _member_id(payload: Mapping[str, Any], field: str = "paid_by") -> str:
+    """A member of the house (OWNER_MEMBER_ID or a partner's id); "" when not given."""
+    value = payload.get(field) or ""
+    if not isinstance(value, str) or (value and not ITEM_ID_RE.match(value)):
+        raise ValidationError(f"{FIELD_LABELS[field]}: escolha um dos sócios da casa")
+    return value
+
+
 def _choice(payload: Mapping[str, Any], field: str, options: tuple[str, ...], default: Optional[str] = None) -> str:
     value = payload.get(field, default)
     if value not in options:
@@ -134,6 +153,68 @@ def _areas(payload: Mapping[str, Any], previous: tuple[Area, ...]) -> tuple[Area
 
 
 @dataclass(frozen=True)
+class Partner:
+    """Someone who bought the house together with its owner and accepted the invite: `user` is their
+    login (`sub`), `id` is how the house's records refer to them (`paid_by`, the purchase shares)."""
+    id: str
+    user: str
+    phone: str
+
+
+@dataclass(frozen=True)
+class Invite:
+    """An invite to be a partner, sent to a phone, waiting to be accepted or declined."""
+    id: str
+    phone: str
+    date: str
+
+
+@dataclass(frozen=True)
+class Share:
+    """How much of the purchase (what was paid up front: the price when cash, the entrada when in
+    installments, plus the purchase costs) one member paid."""
+    member_id: str
+    cents: int
+
+
+def shares_from_input(payload: Mapping[str, Any], member_ids: list[str]) -> tuple[Share, ...]:
+    """`shares`: [{"member_id", "cents"}], each member at most once; the ones with 0 are dropped."""
+    shares = payload.get("shares")
+    if not isinstance(shares, list):
+        raise ValidationError("divisão da compra: informe quanto cada sócio pagou")
+    result, seen = [], set()
+    for item in shares:
+        if not isinstance(item, Mapping) or item.get("member_id") not in member_ids or item["member_id"] in seen:
+            raise ValidationError("divisão da compra: escolha os sócios da casa, cada um uma vez")
+        seen.add(item["member_id"])
+        cents = item.get("cents")
+        if isinstance(cents, bool) or not isinstance(cents, int) or not 0 <= cents <= MAX_AMOUNT_CENTS:
+            raise ValidationError("divisão da compra: informe um valor em centavos para cada sócio")
+        if cents:
+            result.append(Share(item["member_id"], cents))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
+class PendingInvite:
+    """The invite as its guest sees it, kept under their phone: from whom, to which house."""
+    id: str
+    phone: str
+    owner: str
+    house_id: str
+    house_name: str
+    from_phone: str
+    date: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "PendingInvite":
+        return cls(d["id"], d["phone"], d["owner"], d["house_id"], d["house_name"], d["from_phone"], d["date"])
+
+
+@dataclass(frozen=True)
 class House:
     """A house that was bought to be renovated. The purchase is its price plus what it cost to buy it
     (ITBI, deed, registry, broker...); the renovation costs are Expenses. It is bought "cash" (à vista)
@@ -151,6 +232,10 @@ class House:
     payment_type: str = "cash"
     target_profit_percent: float = 0
     areas: tuple[Area, ...] = ()    # the parts that need renovation; each cost may be linked to one
+    owner_phone: str = ""
+    partners: tuple[Partner, ...] = ()
+    invites: tuple[Invite, ...] = ()
+    purchase_shares: tuple[Share, ...] = ()     # empty: the owner paid the whole purchase
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None,
@@ -160,12 +245,25 @@ class House:
         down_payment = _cents(payload, "down_payment_cents", required=False) if payment_type == "installments" else 0
         if down_payment > price:
             raise ValidationError("entrada: não pode ser maior que o valor do imóvel")
+        # who it belongs to and its partners never come from the form: they are kept from before
         return cls(id or new_id(), _text(payload, "name"), _text(payload, "address", 200),
                    parse_date(payload.get("purchase_date"), FIELD_LABELS["purchase_date"]),
                    price, _cents(payload, "purchase_costs_cents", required=False),
                    _choice(payload, "status", HOUSE_STATUSES, "renovating"),
                    _text(payload, "notes", 2000, required=False), down_payment, payment_type,
-                   _percent(payload, "target_profit_percent"), _areas(payload, previous.areas if previous else ()))
+                   _percent(payload, "target_profit_percent"), _areas(payload, previous.areas if previous else ()),
+                   previous.owner_phone if previous else "", previous.partners if previous else (),
+                   previous.invites if previous else (), previous.purchase_shares if previous else ())
+
+    @property
+    def upfront_cents(self) -> int:
+        """What was paid at the purchase: the price (cash) or the entrada (installments), plus its costs."""
+        paid = self.down_payment_cents if self.payment_type == "installments" else self.purchase_price_cents
+        return paid + self.purchase_costs_cents
+
+    @property
+    def member_ids(self) -> list[str]:
+        return [OWNER_MEMBER_ID] + [p.id for p in self.partners]
 
     @property
     def purchase_total_cents(self) -> int:
@@ -182,7 +280,11 @@ class House:
                    # saved before the field existed: an entrada meant it was bought in installments
                    d.get("payment_type", "installments" if d.get("down_payment_cents") else "cash"),
                    d.get("target_profit_percent", 0),
-                   tuple(Area(a["id"], a["name"]) for a in d.get("areas", ())))
+                   tuple(Area(a["id"], a["name"]) for a in d.get("areas", ())),
+                   d.get("owner_phone", ""),
+                   tuple(Partner(p["id"], p["user"], p["phone"]) for p in d.get("partners", ())),
+                   tuple(Invite(i["id"], i["phone"], i["date"]) for i in d.get("invites", ())),
+                   tuple(Share(s["member_id"], s["cents"]) for s in d.get("purchase_shares", ())))
 
 
 @dataclass(frozen=True)
@@ -196,6 +298,7 @@ class Expense:
     amount_cents: int
     supplier: str = ""
     area_id: str = ""               # one of the house's areas; "" = not linked to an area
+    paid_by: str = ""               # the member who paid it; "" = the owner
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], house_id: str, id: Optional[str] = None) -> "Expense":
@@ -205,7 +308,7 @@ class Expense:
         return cls(id or new_id(), house_id, parse_date(payload.get("date")),
                    _choice(payload, "category", EXPENSE_CATEGORIES),
                    _text(payload, "description", 120), _cents(payload, "amount_cents", minimum=1),
-                   _text(payload, "supplier", 80, required=False), area_id)
+                   _text(payload, "supplier", 80, required=False), area_id, _member_id(payload))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -213,7 +316,7 @@ class Expense:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "Expense":
         return cls(d["id"], d["house_id"], d["date"], d["category"], d["description"], d["amount_cents"],
-                   d.get("supplier", ""), d.get("area_id", ""))
+                   d.get("supplier", ""), d.get("area_id", ""), d.get("paid_by", ""))
 
 
 @dataclass(frozen=True)
@@ -224,6 +327,7 @@ class Installment:
     due_date: str
     amount_cents: int
     paid_date: str = ""
+    paid_by: str = ""               # the member who paid it (when paid); "" = the owner
 
     @property
     def paid(self) -> bool:
@@ -234,7 +338,8 @@ class Installment:
         paid_date = payload.get("paid_date") or ""
         return cls(id or new_id(), house_id, parse_date(payload.get("due_date"), FIELD_LABELS["due_date"]),
                    _cents(payload, "amount_cents", minimum=1),
-                   parse_date(paid_date, FIELD_LABELS["paid_date"]) if paid_date else "")
+                   parse_date(paid_date, FIELD_LABELS["paid_date"]) if paid_date else "",
+                   _member_id(payload) if paid_date else "")
 
     @classmethod
     def plan(cls, payload: Mapping[str, Any], house_id: str) -> list["Installment"]:
@@ -251,4 +356,5 @@ class Installment:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "Installment":
-        return cls(d["id"], d["house_id"], d["due_date"], d["amount_cents"], d.get("paid_date", ""))
+        return cls(d["id"], d["house_id"], d["due_date"], d["amount_cents"], d.get("paid_date", ""),
+                   d.get("paid_by", ""))
