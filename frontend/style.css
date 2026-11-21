@@ -77,6 +77,13 @@ button.link.back { padding-left: 0; color: var(--brand); margin-bottom: 4px; }
 .toast { background: var(--text); color: var(--background); padding: 10px 16px; border-radius: 8px; max-width: 90%; }
 .toast.error { background: var(--danger); color: #fff; }
 .login { max-width: 380px; margin: 10vh auto 0; }
+.password-field { position: relative; }
+.password-field input { padding-right: 48px; }
+.password-field .reveal { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 40px; height: 40px;
+  display: grid; place-items: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; }
+.password-field .reveal:hover { color: var(--text); }
+.password-field .reveal svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; }
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 32px 20px; text-align: center; }
 .empty-state h2 { margin: 0; }
 .empty-state button { margin-top: 12px; }

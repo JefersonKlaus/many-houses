@@ -68,6 +68,11 @@ def run():
         page.click("text=Entrar")
         expect(page.locator("text=Primeiro acesso")).to_be_visible()
         page.fill("#l-password", "Another-Password-9")
+        expect(page.locator("#l-password")).to_have_attribute("type", "password")
+        page.click("[aria-label='Mostrar senha']")                  # the eye shows what was typed
+        expect(page.locator("#l-password")).to_have_attribute("type", "text")
+        page.click("[aria-label='Ocultar senha']")
+        expect(page.locator("#l-password")).to_have_attribute("type", "password")
         page.click("text=Definir senha")
         expect(page.locator(".empty-state")).to_contain_text("Nenhuma casa ainda")
         errors.clear()                  # the browser logged Cognito's 400 for the wrong password, on purpose
