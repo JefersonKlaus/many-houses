@@ -1,4 +1,4 @@
-// Alterar senha (at the bottom of the menu): the current password and the new one twice, changed straight
+// Alterar senha (Perfil > Segurança): the current password and the new one twice, changed straight
 // with Cognito. Without a login (the local server) there is no password: the form says so.
 import { changePassword } from "../auth.js";
 import { CONFIG } from "../config.js";

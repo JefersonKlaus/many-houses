@@ -67,8 +67,8 @@ frontend/
   js/auth.js           Cognito login (tokens)
   js/config.js         where the API is (written by the deploy; empty in the repo)
   js/screens/houses.js the houses: list, one house's page, the forms
-  js/screens/settings.js Configurações (bottom of the menu): name, default profit
-  js/screens/password.js Alterar senha (bottom of the menu)
+  js/screens/settings.js the Configurações group (bottom of the menu): Perfil, Predefinições
+  js/screens/password.js Alterar senha (Perfil > Segurança)
 ```
 
 The frontend doesn't know whether the backend is AWS or local: it calls `CONFIG.apiUrl`.
@@ -157,10 +157,11 @@ Rules worth knowing:
   `INST#<house id>#<id>`, `TL#<house id>#<id>` (timeline) or `LINK#<house id>` (a partner's link to the owner's house, which stays in
   the owner's partition); `PK = PHONE#<phone>`, `SK = INVITE#<id>` for the invites waiting. A payment
   plan is written with `BatchWriteItem`, 25 items per call.
-- Configurações (bottom of the menu): the name partners see (empty: the login's; changing it updates
-  every house the user is in) and the default profit a new house starts with (kept as
-  `PK = OWNER#<user>`, `SK = PROFILE`). Alterar senha (also there): changed straight with Cognito,
-  with the login's access token; the local server has no login, so no password to change.
+- Configurações, a group at the bottom of the menu: **Perfil** (the name partners see, empty = the
+  login's, and changing it updates every house the user is in; the login's phone and e-mail; Segurança
+  with Alterar senha, changed straight with Cognito with the login's access token, none on the local
+  server since it has no login) and **Predefinições** (the profit a new house starts with). Both are
+  kept as `PK = OWNER#<user>`, `SK = PROFILE`.
 - Every list and table shows 10 rows a page. Sold houses are hidden from the list until asked for,
   and always come last (the rest by name, then the sold ones by name).
 

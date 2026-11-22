@@ -313,18 +313,22 @@ def run():
         expect(partner.locator(".empty-state")).to_be_visible()
 
         # Configurações: the name partners see, the default profit (a new house starts with it), the password
-        page.click("#open-settings")                                                  # at the bottom of the menu
-        expect(page.locator("#open-settings")).to_have_attribute("aria-current", "page")
+        page.click("#open-profile")                                   # the Configurações group, bottom of the menu
+        expect(page.locator("#open-profile")).to_have_attribute("aria-current", "page")
+        expect(page.locator("h1")).to_have_text("Perfil")
         expect(page.locator("#s-name")).to_have_value("Ana Lima")                     # the login's name
         expect(page.locator("#settings-data")).to_contain_text("(11) 98765-4321")
         page.fill("#s-name", "Ana L. Souza")
         page.click("#settings-data button[type=submit]")
         expect(page.locator(".toast").last).to_contain_text("Dados salvos")
+        page.click("#open-defaults")
+        expect(page.locator("h1")).to_have_text("Predefinições")
         page.fill("#s-profit", "25")
         page.click("#settings-defaults button[type=submit]")
-        expect(page.locator(".toast").last).to_contain_text("Padrões salvos")
-        expect(page.locator("#settings-password")).to_have_count(0)                  # the password: in the menu
-        page.click("#change-password")
+        expect(page.locator(".toast").last).to_contain_text("Predefinições salvas")
+        page.click("#open-profile")
+        expect(page.locator("#s-name")).to_have_value("Ana L. Souza")                 # saving one kept the other
+        page.click("#change-password")                                                # Perfil > Segurança
         page.fill("#p-current", "Wrong-Password-1")
         page.fill("#p-new", "Third-Password-7")
         page.fill("#p-again", "Third-Password-7")
@@ -419,13 +423,15 @@ def run_without_login():
 
         # local mode: Alterar senha explains there is no password without a login
         page.click("#menu-toggle")
+        page.click("#open-profile")
         page.click("#change-password")
         expect(page.locator("#password-form")).to_contain_text("No modo local não há login")
         expect(page.locator("#password-form button[type=submit]")).to_be_disabled()
         page.click("#password-form >> text=Fechar")
+        page.click("#menu-toggle")
+        page.click("nav >> text=Casas")
 
         # every list pages at 10: the 12 costs of a house in two pages
-        page.click("text=‹ Casas")
         page.click("#toggle-sold")                                                     # it is a sold house
         page.locator(".list-item", has_text="Casa da Rua das Flores").click()
         page.click("#tab-renovation")

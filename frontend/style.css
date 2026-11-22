@@ -36,6 +36,11 @@ nav button[aria-current="page"] { background: var(--brand-light); color: var(--b
 .sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
 .sidebar-footer button.link, .sidebar-footer span { display: block; width: 100%; padding: 10px 12px; color: var(--muted); }
 .sidebar-footer button.link[aria-current="page"] { background: var(--brand-light); color: var(--brand); font-weight: 600; }
+/* the Configurações group: a small title over its pages, "Sair" apart below it */
+.menu-group { display: flex; flex-direction: column; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.sidebar-footer .menu-group-title { display: block; padding: 4px 12px 6px; font-size: .72rem; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.menu-group button.link { color: var(--text); }
 #password-form .notice-warn { margin: 0 0 8px; }
 main { width: 100%; max-width: var(--page-max); min-width: min(100%, var(--page-min)); margin: 0 auto; padding: 16px; }
 @media (prefers-reduced-motion: reduce) { #sidebar { transition: none; } }

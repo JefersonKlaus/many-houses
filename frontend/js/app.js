@@ -2,11 +2,10 @@ import { CONFIG } from "./config.js";
 import { isSignedIn, setNewPassword, signIn, signOut } from "./auth.js";
 import { h, notify, render, revealable, whileDisabled } from "./util.js";
 import { mount as houses } from "./screens/houses.js";
-import { passwordDialog } from "./screens/password.js";
-import { mount as settings } from "./screens/settings.js";
+import { mountDefaults, mountProfile } from "./screens/settings.js";
 
 const content = document.getElementById("content");
-const SCREENS = [["Casas", houses]];             // [name in the menu, mount]; Configurações is at its bottom
+const SCREENS = [["Casas", houses]];             // [name in the menu, mount]; the settings are at its bottom
 
 function loginScreen(challenge = null) {
   // DDD + number, digits only (no mask): 11987654321
@@ -58,11 +57,11 @@ function start() {
     if (e.key === "Escape" && sidebar.classList.contains("open")) { setDrawer(false); toggle.focus(); }
   });
 
-  // the pages: the ones in the menu, and Configurações at its bottom (next to Alterar senha and Sair)
-  const settingsButton = document.getElementById("open-settings");
-  const pages = [...SCREENS, ["Configurações", settings]];
-  const buttons = [...SCREENS.map(([name], i) => h("button", { onclick: () => open(i) }, name)), settingsButton];
-  settingsButton.onclick = () => open(pages.length - 1);
+  // the pages: the ones in the menu, then the Configurações group at its bottom (Perfil, Predefinições)
+  const groupButtons = [document.getElementById("open-profile"), document.getElementById("open-defaults")];
+  const pages = [...SCREENS, ["Perfil", mountProfile], ["Predefinições", mountDefaults]];
+  const buttons = [...SCREENS.map(([name], i) => h("button", { onclick: () => open(i) }, name)), ...groupButtons];
+  groupButtons.forEach((button, i) => { button.onclick = () => open(SCREENS.length + i); });
   const open = (index) => {
     buttons.forEach((b, i) => (i === index ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
     setDrawer(false);
@@ -71,7 +70,6 @@ function start() {
     pages[index][1](area);
   };
   render(document.getElementById("menu"), buttons.slice(0, SCREENS.length));
-  document.getElementById("change-password").onclick = () => { setDrawer(false); passwordDialog(); };
 
   const logout = document.getElementById("logout");
   if (CONFIG.skipLogin) {                        // local server: there is nobody to log out
