@@ -1,9 +1,7 @@
-// Configurações: the user's data (the name partners see; the login's phone and e-mail), the defaults (the
-// profit wanted a new house starts with) and the password.
+// Configurações (at the bottom of the menu): the user's data (the name partners see; the login's phone and
+// e-mail) and the defaults (the profit wanted a new house starts with). The password: "Alterar senha", in the menu.
 import { api } from "../api.js";
-import { changePassword } from "../auth.js";
-import { CONFIG } from "../config.js";
-import { formatPhone, h, notify, percentText, render, revealable, toPercent, whileDisabled } from "../util.js";
+import { formatPhone, h, notify, percentText, render, toPercent, whileDisabled } from "../util.js";
 
 export async function mount(container) {
   render(container, h("p", { className: "notice" }, "Carregando…"));
@@ -46,33 +44,5 @@ export async function mount(container) {
         + "para trocá-los, fale com quem administra o sistema.")),
     form("settings-defaults", "Padrões", saveDefaults, "Padrões salvos.",
       field("s-profit", "Lucro desejado padrão (%)", profit,
-        "Já vem preenchido ao cadastrar uma casa nova; em cada casa dá para mudar.")),
-    !CONFIG.skipLogin && passwordCard());
-}
-
-/** Changes the login's password: the current one, the new one twice. */
-function passwordCard() {
-  const input = (id, autocomplete) => h("input", { id, type: "password", required: true, autocomplete });
-  const current = input("p-current", "current-password");
-  const proposed = input("p-new", "new-password");
-  const again = input("p-again", "new-password");
-  const button = h("button", { className: "primary", type: "submit" }, "Trocar senha");
-  const form = h("form", { className: "card settings", id: "settings-password" }, h("h2", {}, "Senha"),
-    h("label", { htmlFor: "p-current" }, "Senha atual"), revealable(current),
-    h("label", { htmlFor: "p-new" }, "Nova senha"), revealable(proposed),
-    h("label", { htmlFor: "p-again" }, "Repita a nova senha"), revealable(again),
-    h("p", { className: "muted hint" }, "10 caracteres ou mais, com maiúscula, minúscula e número."),
-    h("div", { className: "actions" }, button));
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    whileDisabled(button, async () => {
-      try {
-        if (proposed.value !== again.value) throw new Error("A nova senha e a repetição não são iguais.");
-        await changePassword(current.value, proposed.value);
-        form.reset();
-        notify("Senha trocada.");
-      } catch (error) { notify(error.message, true); }
-    });
-  });
-  return form;
+        "Já vem preenchido ao cadastrar uma casa nova; em cada casa dá para mudar.")));
 }

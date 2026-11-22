@@ -2,10 +2,11 @@ import { CONFIG } from "./config.js";
 import { isSignedIn, setNewPassword, signIn, signOut } from "./auth.js";
 import { h, notify, render, revealable, whileDisabled } from "./util.js";
 import { mount as houses } from "./screens/houses.js";
+import { passwordDialog } from "./screens/password.js";
 import { mount as settings } from "./screens/settings.js";
 
 const content = document.getElementById("content");
-const SCREENS = [["Casas", houses], ["Configurações", settings]];   // [name in the menu, mount]
+const SCREENS = [["Casas", houses]];             // [name in the menu, mount]; Configurações is at its bottom
 
 function loginScreen(challenge = null) {
   // DDD + number, digits only (no mask): 11987654321
@@ -57,15 +58,20 @@ function start() {
     if (e.key === "Escape" && sidebar.classList.contains("open")) { setDrawer(false); toggle.focus(); }
   });
 
-  const buttons = SCREENS.map(([name], i) => h("button", { onclick: () => open(i) }, name));
+  // the pages: the ones in the menu, and Configurações at its bottom (next to Alterar senha and Sair)
+  const settingsButton = document.getElementById("open-settings");
+  const pages = [...SCREENS, ["Configurações", settings]];
+  const buttons = [...SCREENS.map(([name], i) => h("button", { onclick: () => open(i) }, name)), settingsButton];
+  settingsButton.onclick = () => open(pages.length - 1);
   const open = (index) => {
     buttons.forEach((b, i) => (i === index ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
     setDrawer(false);
     const area = h("div");
     render(content, area);
-    SCREENS[index][1](area);
+    pages[index][1](area);
   };
-  render(document.getElementById("menu"), buttons);
+  render(document.getElementById("menu"), buttons.slice(0, SCREENS.length));
+  document.getElementById("change-password").onclick = () => { setDrawer(false); passwordDialog(); };
 
   const logout = document.getElementById("logout");
   if (CONFIG.skipLogin) {                        // local server: there is nobody to log out

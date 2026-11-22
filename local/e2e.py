@@ -313,7 +313,8 @@ def run():
         expect(partner.locator(".empty-state")).to_be_visible()
 
         # Configurações: the name partners see, the default profit (a new house starts with it), the password
-        page.click("nav >> text=Configurações")
+        page.click("#open-settings")                                                  # at the bottom of the menu
+        expect(page.locator("#open-settings")).to_have_attribute("aria-current", "page")
         expect(page.locator("#s-name")).to_have_value("Ana Lima")                     # the login's name
         expect(page.locator("#settings-data")).to_contain_text("(11) 98765-4321")
         page.fill("#s-name", "Ana L. Souza")
@@ -322,16 +323,18 @@ def run():
         page.fill("#s-profit", "25")
         page.click("#settings-defaults button[type=submit]")
         expect(page.locator(".toast").last).to_contain_text("Padrões salvos")
+        expect(page.locator("#settings-password")).to_have_count(0)                  # the password: in the menu
+        page.click("#change-password")
         page.fill("#p-current", "Wrong-Password-1")
         page.fill("#p-new", "Third-Password-7")
         page.fill("#p-again", "Third-Password-7")
-        page.click("#settings-password button[type=submit]")
+        page.click("#password-form button[type=submit]")
         expect(page.locator(".toast.error").last).to_contain_text("Senha atual incorreta")
         errors[:] = [e for e in errors if "status of 400" not in e]                  # that 400 was on purpose
         page.fill("#p-current", "Another-Password-9")
-        page.click("#settings-password button[type=submit]")
+        page.click("#password-form button[type=submit]")
         expect(page.locator(".toast").last).to_contain_text("Senha trocada")
-        expect(page.locator("#p-current")).to_have_value("")
+        expect(page.locator("#password-form")).to_have_count(0)                      # the form closed
         page.click("nav >> text=Casas")
 
         # a house bought with a partner: the split is set when registering it, and the partner is invited
@@ -413,6 +416,13 @@ def run_without_login():
         page.click("#tab-renovation")
         amount = page.locator("#expenses tbody tr").first.locator("td.num").bounding_box()
         assert amount["x"] + amount["width"] <= 390, "a cost's amount off the screen on a phone"
+
+        # local mode: Alterar senha explains there is no password without a login
+        page.click("#menu-toggle")
+        page.click("#change-password")
+        expect(page.locator("#password-form")).to_contain_text("No modo local não há login")
+        expect(page.locator("#password-form button[type=submit]")).to_be_disabled()
+        page.click("#password-form >> text=Fechar")
 
         # every list pages at 10: the 12 costs of a house in two pages
         page.click("text=‹ Casas")
