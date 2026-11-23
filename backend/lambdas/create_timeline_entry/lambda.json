@@ -1,0 +1,4 @@
+{
+  "route": "POST /houses/{id}/timeline",
+  "database": "write"
+}

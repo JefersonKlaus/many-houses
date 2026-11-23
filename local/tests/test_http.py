@@ -11,10 +11,11 @@ from api_gateway import ROUTES, dispatch
 from memory_repository import MemoryRepository
 
 
-def call(deps, method, path, body=None, query=None, owner="owner-a", base64_=False):
+def call(deps, method, path, body=None, query=None, owner="owner-a", base64_=False, phone=None, name=None):
     event = {"rawPath": path, "requestContext": {"http": {"method": method}}, "queryStringParameters": query}
     if owner is not None:
-        event["requestContext"]["authorizer"] = {"jwt": {"claims": {"sub": owner}}}
+        claims = {"sub": owner, **({"phone_number": phone} if phone else {}), **({"name": name} if name else {})}
+        event["requestContext"]["authorizer"] = {"jwt": {"claims": claims}}
     if body is not None:
         text = body if isinstance(body, str) else json.dumps(body)
         event["body"] = base64.b64encode(text.encode()).decode() if base64_ else text
@@ -29,23 +30,83 @@ def api():
 
 
 def test_full_flow(api):
-    status, house = call(api, "POST", "/houses", house_input())
-    assert status == 201 and house["status"] == "renovating"
-    hid = house["id"]
-    status, expense = call(api, "POST", f"/houses/{hid}/expenses", expense_input())
-    assert status == 201 and expense["house_id"] == hid
+    status, view = call(api, "POST", "/houses", house_input(
+        payment_type="installments", down_payment_cents=6_000_000,
+        installments={"first_due_date": "2026-01-10", "amount_cents": 50_000, "count": 1}))
+    assert status == 201 and view["house"]["status"] == "renovating"
+    hid = view["house"]["id"]
+    status, view = call(api, "POST", f"/houses/{hid}/expenses", expense_input())
+    assert status == 201 and view["totals"]["renovation_cents"] == 150_000
+    eid = view["expenses"][0]["id"]
     status, found = call(api, "GET", f"/houses/{hid}")
-    assert status == 200 and found["totals"]["renovation_cents"] == 150_000
-    status, changed = call(api, "PUT", f"/houses/{hid}/expenses/{expense['id']}", expense_input(amount_cents=10))
-    assert status == 200 and changed["amount_cents"] == 10
+    assert status == 200 and found == view
+    status, view = call(api, "PUT", f"/houses/{hid}/expenses/{eid}", expense_input(amount_cents=10))
+    assert status == 200 and view["expenses"][0]["amount_cents"] == 10
     status, houses = call(api, "GET", "/houses")
     assert status == 200 and houses[0]["totals"]["total_cents"] == 31_800_010
-    assert call(api, "PUT", f"/houses/{hid}", house_input(name="Nova"))[1]["name"] == "Nova"
-    assert call(api, "DELETE", f"/houses/{hid}/expenses/{expense['id']}") == (204, None)
-    assert call(api, "DELETE", f"/houses/{hid}/expenses/{expense['id']}")[0] == 404
+    assert call(api, "PUT", f"/houses/{hid}", house_input(name="Nova", payment_type="installments", down_payment_cents=6_000_000))[1]["house"]["name"] == "Nova"
+    status, view = call(api, "DELETE", f"/houses/{hid}/expenses/{eid}")
+    assert status == 200 and view["expenses"] == []
+    assert call(api, "DELETE", f"/houses/{hid}/expenses/{eid}")[0] == 404
+
+    status, view = call(api, "POST", f"/houses/{hid}/installments",
+                        {"first_due_date": "2026-02-10", "amount_cents": 100_000, "count": 2})
+    assert status == 201 and len(view["installments"]) == 3
+    first = view["installments"][1]
+    status, view = call(api, "PUT", f"/houses/{hid}/installments/{first['id']}", {**first, "paid_date": "2026-02-10"})
+    assert status == 200 and view["totals"]["payment"]["total_paid_cents"] == 6_100_000
+    status, view = call(api, "DELETE", f"/houses/{hid}/installments/{first['id']}")
+    assert status == 200 and len(view["installments"]) == 2
+    assert call(api, "DELETE", f"/houses/{hid}/installments/{first['id']}")[0] == 404
+
     assert call(api, "DELETE", f"/houses/{hid}") == (204, None)
     assert call(api, "GET", f"/houses/{hid}")[0] == 404
     assert call(api, "GET", "/houses")[1] == []
+
+
+def test_partners_over_http(api):
+    """The phone comes from the token (Cognito's phone_number), never from the body; partners can all do
+    the same things."""
+    hid = call(api, "POST", "/houses", house_input(), phone="+5511911111111")[1]["house"]["id"]
+    status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "21922222222"}, phone="+5511911111111")
+    assert status == 201 and view["house"]["owner_phone"] == "+5511911111111"
+    assert call(api, "GET", "/invites", owner="owner-b") == (200, [])               # a login with no phone
+    status, (invite,) = call(api, "GET", "/invites", owner="owner-b", phone="+5521922222222")
+    assert status == 200 and invite["from_phone"] == "+5511911111111"
+    assert call(api, "POST", f"/invites/{invite['id']}/accept", {}, owner="owner-b",
+                phone="+5521922222222") == (200, {"house_id": hid})
+    status, view = call(api, "GET", f"/houses/{hid}", owner="owner-b")
+    assert status == 200 and view["role"] == "partner"
+    status, body = call(api, "POST", f"/houses/{hid}/invites", {"phone": "41944444444"}, owner="owner-b",
+                        phone="+5521922222222")
+    assert status == 201                                                            # a partner invites too
+    assert call(api, "DELETE", f"/houses/{hid}/invites/{body['house']['invites'][0]['id']}", owner="owner-b")[0] == 200
+    partner = view["me"]
+    status, view = call(api, "POST", f"/houses/{hid}/expenses", {**expense_input(), "paid_by": partner}, owner="owner-b")
+    assert status == 201
+    status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "31933333333"}, phone="+5511911111111")
+    invite_id = view["house"]["invites"][0]["id"]
+    assert call(api, "POST", f"/invites/{invite_id}/decline", {}, owner="owner-c", phone="+5531933333333") == (204, None)
+    status, view = call(api, "POST", f"/houses/{hid}/invites", {"phone": "31933333333"}, phone="+5511911111111")
+    assert call(api, "DELETE", f"/houses/{hid}/invites/{view['house']['invites'][0]['id']}")[0] == 200
+    status, view = call(api, "DELETE", f"/houses/{hid}/partners/{partner}")
+    assert status == 400 and "pagamentos" in view["error"]                          # the cost they paid
+    expense = call(api, "GET", f"/houses/{hid}")[1]["expenses"][0]
+    call(api, "PUT", f"/houses/{hid}/expenses/{expense['id']}", {**expense, "paid_by": "00000000"})  # the owner paid it
+    assert call(api, "DELETE", f"/houses/{hid}/partners/{partner}")[1]["members"][1:] == []
+
+
+def test_the_name_comes_from_the_token(api):
+    status, view = call(api, "POST", "/houses", {**house_input(), "owner_name": "Hacker"}, name="  Ana   Lima ")
+    assert status == 201 and view["members"][0]["name"] == "Ana Lima"             # never from the body
+
+
+def test_house_bought_with_partners_over_http(api):
+    body = {**house_input(), "owner_share_cents": 21_800_000, "partners": [{"phone": "21922222222", "cents": 10_000_000}]}
+    status, view = call(api, "POST", "/houses", body, phone="+5511911111111")
+    assert status == 201 and [m["role"] for m in view["members"]] == ["owner", "invited"]
+    assert call(api, "GET", "/invites", owner="owner-b", phone="+5521922222222")[1][0]["house_name"] == "Casa Azul"
+    assert call(api, "PUT", f"/houses/{view['house']['id']}/shares", {"shares": []})[0] == 404     # no later split
 
 
 def test_validation_is_400_with_a_message(api):
@@ -69,7 +130,8 @@ def test_the_owner_comes_from_the_token_not_from_the_body(api):
 @pytest.mark.parametrize("method, path", [
     ("GET", "/nothing"), ("PATCH", "/houses"), ("GET", "/houses/xyz"), ("GET", "/houses/"),
     ("DELETE", "/houses/ZZZZZZZZ"), ("GET", "/houses/abcd1234/expenses"),
-    ("PUT", "/houses/abcd1234/expenses/../x"),
+    ("PUT", "/houses/abcd1234/expenses/../x"), ("GET", "/houses/abcd1234/installments"),
+    ("PUT", "/houses/abcd1234/installments/NOT-AN-ID"),
 ])
 def test_odd_routes_are_404(api, method, path):
     assert call(api, method, path)[0] == 404

@@ -5,7 +5,7 @@ from houses_core.adapters.aws import aws_dependencies
 
 from .use_case import create_expense
 
-handle = endpoint(lambda deps, r: create_expense(deps, r.owner, r.id, r.body).to_dict(), status=201)
+handle = endpoint(lambda deps, r: create_expense(deps, r.owner, r.id, r.body), status=201)
 
 
 def lambda_handler(event, context):

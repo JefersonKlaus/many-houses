@@ -1,0 +1,4 @@
+{
+  "route": "PUT /settings",
+  "database": "write"
+}

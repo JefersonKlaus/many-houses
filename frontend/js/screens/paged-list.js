@@ -42,3 +42,26 @@ export function pagedList(items, row, { label, searchText = (item) => item.name 
   draw();
   return h("div", { className: "card list-card" }, search, list, nothingFound, pager);
 }
+
+/** The same pages for a table: `rows` are its <tr>s (or any rows, inside a `tag` other than <tbody>),
+ *  PAGE_SIZE at a time. Returns [tbody, pager]: the pager goes right after the table. `start`: the page
+ *  to open on (e.g. the one of the next installment). */
+export function pagedRows(rows, { start = 0, tag = "tbody" } = {}) {
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  let page = Math.min(Math.max(0, start), pages - 1);
+  const body = h(tag);                            // a <tbody>, or e.g. a <div> for a list of cards
+  const pager = h("div", { className: "pager", role: "navigation", "aria-label": "Páginas" });
+  const draw = () => {
+    render(body, rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
+    const first = page * PAGE_SIZE + 1, last = Math.min(rows.length, (page + 1) * PAGE_SIZE);
+    render(pager, pages > 1 && [
+      h("span", { className: "muted" }, `${first}–${last} de ${rows.length}`),
+      h("button", { className: "secondary small", "aria-label": "Página anterior", disabled: page === 0,
+        onclick: () => { page -= 1; draw(); } }, "‹"),
+      h("span", { className: "pager-page" }, `${page + 1} de ${pages}`),
+      h("button", { className: "secondary small", "aria-label": "Próxima página", disabled: page === pages - 1,
+        onclick: () => { page += 1; draw(); } }, "›")]);
+  };
+  draw();
+  return [body, pager];
+}

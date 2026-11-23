@@ -40,6 +40,23 @@ export function toCents(text) {
   return Number(whole) * 100 + Number(cents.padEnd(2, "0"));
 }
 
+/** "30", "12,5" or "12.5" -> 12.5; empty -> 0; null if it is not a percentage. */
+export function toPercent(text) {
+  const cleaned = String(text).trim().replace("%", "").trim().replace(",", ".");
+  if (cleaned === "") return 0;
+  return /^\d{1,4}(\.\d{1,2})?$/.test(cleaned) ? Number(cleaned) : null;
+}
+
+/** 12.5 -> "12,5" */
+export const percentText = (value) => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+
+/** "+5511987654321" -> "(11) 98765-4321" (and a 10-digit landline: "(11) 3456-7890"). */
+export function formatPhone(phone) {
+  const d = String(phone || "").replace(/^\+55/, "");
+  if (!/^\d{10,11}$/.test(d)) return phone || "";
+  return `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}`;
+}
+
 /** "2026-11-20" -> "20/11/2026". */
 export const formatDate = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
@@ -104,4 +121,38 @@ export function openDialog(title, ...children) {
   document.body.append(dialog);
   dialog.showModal();
   return dialog;
+}
+
+/** Shows a photo big, in a dialog (click outside or "Fechar" closes it). */
+export function viewPhoto(url, title = "Foto") {
+  const dialog = openDialog(title, h("img", { className: "photo-big", src: url, alt: title }),
+    h("div", { className: "actions" }, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+}
+
+const SVG = "http://www.w3.org/2000/svg";
+const EYE = "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
+const EYE_OFF = "M3 3l18 18 M10.6 5.1A10.7 10.7 0 0 1 12 5c7 0 11 7 11 7a18 18 0 0 1-3.2 4.1 M6.6 6.6A18 18 0 0 0 1 12s4 7 11 7a10.6 10.6 0 0 0 5.4-1.6 M9.9 9.9a3 3 0 0 0 4.2 4.2";
+
+/** A password input with an eye button that shows / hides what was typed. */
+export function revealable(input) {
+  const path = document.createElementNS(SVG, "path");
+  const icon = document.createElementNS(SVG, "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(path);
+  const toggle = h("button", { type: "button", className: "reveal", onclick: () => {
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    update();
+    input.focus();
+  } }, icon);
+  function update() {
+    const shown = input.type === "text";
+    path.setAttribute("d", shown ? EYE_OFF : EYE);
+    toggle.setAttribute("aria-label", shown ? "Ocultar senha" : "Mostrar senha");
+    toggle.title = shown ? "Ocultar senha" : "Mostrar senha";
+    toggle.setAttribute("aria-pressed", String(shown));
+  }
+  update();
+  return h("div", { className: "password-field" }, input, toggle);
 }

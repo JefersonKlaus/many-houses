@@ -1,0 +1,4 @@
+{
+  "route": "POST /houses/{id}/invites",
+  "database": "write"
+}

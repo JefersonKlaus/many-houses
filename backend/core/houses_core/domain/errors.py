@@ -11,3 +11,4 @@ class ValidationError(BusinessError):
 
 class NotFound(BusinessError):
     status = 404
+

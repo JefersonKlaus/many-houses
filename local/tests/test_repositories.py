@@ -1,9 +1,9 @@
 """The DynamoDB format: what each item looks like in the table (the in-memory one has no format)."""
 import json
 
-from conftest import FakeDynamo, OWNER, expense_input, house_input
+from conftest import FakeDynamo, OWNER, expense_input, house_input, plan_input
 from houses_core.adapters.dynamo_repository import DynamoRepository
-from houses_core.domain.models import Expense, House
+from houses_core.domain.models import Expense, House, Installment
 
 
 def test_keys_and_pagination():
@@ -29,3 +29,16 @@ def test_one_house_prefix_does_not_catch_another():
     repo.save_expense(OWNER, Expense.from_input(expense_input(), "aaaa0000"))
     repo.save_expense(OWNER, Expense.from_input(expense_input(), "aaaa0001"))
     assert [e.house_id for e in repo.list_expenses(OWNER, "aaaa0000")] == ["aaaa0000"]
+
+
+def test_installments_go_in_batches_and_unprocessed_items_are_sent_again():
+    table = FakeDynamo(page_size=100, unprocessed=2)          # DynamoDB throttles two calls
+    repo = DynamoRepository(table, "t")
+    plan = Installment.plan(plan_input(count=60), "aaaa0000")
+    repo.save_installments(OWNER, plan)
+    assert table.batch_calls == 3 + 2                          # 25 + 25 + 10, and two retries
+    assert (f"OWNER#{OWNER}", f"INST#aaaa0000#{plan[0].id}") in table.items
+    assert sorted(repo.list_installments(OWNER, "aaaa0000"), key=lambda i: i.id) == sorted(plan, key=lambda i: i.id)
+    assert repo.list_expenses(OWNER) == []                     # installments are not costs
+    repo.delete_installments(OWNER, "aaaa0000", [i.id for i in plan])
+    assert repo.list_installments(OWNER) == []

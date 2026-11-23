@@ -1,16 +1,27 @@
-"""Use case (application layer): changes a renovation cost of a house.
+"""Use case (application layer): changes a renovation cost (without `paid_by`, it keeps who paid it); a
+photo replaced or removed is deleted.
+The user is the house's owner or one of its partners (application.house_access). Answers the house's page (application.house_view).
 Depends only on the core's domain and ports, never on AWS."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Mapping
 
-from houses_core.application import get_expense
+from houses_core.application import (check_expense_area, check_member, delete_photos, get_expense, house_access,
+                                     house_view)
 from houses_core.domain.models import Expense
 from houses_core.ports import Dependencies
 
 
-def update_expense(deps: Dependencies, owner: str, house_id: str, id: str, payload: Mapping[str, Any]) -> Expense:
-    get_expense(deps.repo, owner, house_id, id)
+def update_expense(deps: Dependencies, user: str, house_id: str, id: str,
+                   payload: Mapping[str, Any]) -> dict[str, Any]:
+    access = house_access(deps.repo, user, house_id)
+    before = get_expense(deps.repo, access, id)
     expense = Expense.from_input(payload, house_id, id)
-    deps.repo.save_expense(owner, expense)
-    return expense
+    if not expense.paid_by:
+        expense = replace(expense, paid_by=before.paid_by)
+    check_expense_area(access.house, expense)
+    check_member(access.house, expense.paid_by)
+    deps.repo.save_expense(access.owner, expense)
+    delete_photos(deps, access, set(before.photos) - set(expense.photos))      # a photo replaced or removed
+    return house_view(deps, access)
