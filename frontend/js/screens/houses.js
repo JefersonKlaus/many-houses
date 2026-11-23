@@ -5,7 +5,7 @@
 // on top of the list. Every change answers the house's whole page, which is drawn at once: one request
 // per change, never two.
 import { api, uploadPhoto } from "../api.js";
-import { actionsMenu, centsToText, formatDate, formatMoney, formatPhone, h, notify, openDialog, percent, percentText,
+import { actionsMenu, centsToText, dateInput, dateValue, formatDate, formatMoney, formatPhone, h, notify, openDialog, percent, percentText,
   render, toCents, toPercent, today, viewPhoto, whileDisabled } from "../util.js";
 import { PAGE_SIZE, pagedList, pagedRows } from "./paged-list.js";
 
@@ -76,15 +76,15 @@ export async function mount(container) {
     });
   }
 
-  /** "(11) 98888-7777 convidou você para ser sócio da casa X": accept (it opens) or decline. */
+  /** "(11) 98888-7777 convidou você para ser sócio da casa X": accept (it joins the list) or decline. */
   function inviteCard(invite) {
     const accept = h("button", { className: "primary small" }, "Aceitar");
     const decline = h("button", { className: "secondary small" }, "Recusar");
     accept.onclick = () => whileDisabled(accept, async () => {
       try {
-        const { house_id } = await api("POST", `/invites/${invite.id}/accept`, {});
-        notify(`Agora você é sócio de "${invite.house_name}".`);
-        detail(house_id);
+        await api("POST", `/invites/${invite.id}/accept`, {});
+        notify(`Agora você é sócio de "${invite.house_name}": ela já está na sua lista.`);
+        list();                                  // it shows up in the list; opening it is up to them
       } catch (error) { notify(error.message, true); list(); }
     });
     decline.onclick = () => whileDisabled(decline, async () => {
@@ -519,13 +519,13 @@ export async function mount(container) {
       const address = bind(h("input", { id: "h-address", maxLength: 200, value: d.address }), d, "address");
       const status = select("h-status", STATUS, d.status);
       status.addEventListener("change", () => { d.status = status.value; });
-      const date = h("input", { id: "h-date", type: "date", value: deal.date });
-      date.addEventListener("input", () => { deal.date = date.value; if (!deal.firstTyped) deal.first = addMonth(date.value); });
+      const date = dateInput({ id: "h-date" }, deal.date);
+      date.addEventListener("input", () => { deal.date = date.iso; if (!deal.firstTyped) deal.first = addMonth(date.iso); });
       const next = h("button", { className: "primary", id: "h-next" }, "Continuar: pontos de reforma");
       next.onclick = () => {
         if (!d.name.trim()) return notify("Nome: preencha este campo", true);
         if (!d.address.trim()) return notify("Endereço: preencha este campo", true);
-        if (!deal.date) return notify("Data da compra: informe a data", true);
+        if (!deal.date) return notify("Data da compra: informe a data como dd/mm/aaaa", true);
         go("reforma");
       };
       return h("div", { className: "card form-step" }, h("h2", {}, "Dados da casa"),
@@ -640,8 +640,8 @@ export async function mount(container) {
       const count = bind(h("input", { id: "h-count", type: "number", min: 1, max: 600, inputMode: "numeric", placeholder: "Ex.: 120",
         value: deal.count }), deal, "count");
       const amount = bind(h("input", { id: "h-amount", inputMode: "decimal", placeholder: "0,00", value: deal.amount }), deal, "amount");
-      const first = h("input", { id: "h-first", type: "date", value: deal.first });
-      first.addEventListener("input", () => { deal.first = first.value; deal.firstTyped = true; });
+      const first = dateInput({ id: "h-first" }, deal.first);
+      first.addEventListener("input", () => { deal.first = first.iso; deal.firstTyped = true; });
       const summary = h("p", { className: "muted hint", id: "h-summary" });
       const shares = h("p", { className: "muted hint", id: "h-bundle-note" });
       const prices = () => drafts.map((d) => toCents(d.price) || 0);
@@ -724,7 +724,7 @@ export async function mount(container) {
             if (!editing) {
               if (!(Number(deal.count) >= 1)) throw new Error("Quantidade de parcelas: informe quantas são");
               body.installments = { count: Number(deal.count), amount_cents: money(deal.amount, "Valor de cada parcela"),
-                first_due_date: deal.first };
+                first_due_date: dateValue(first, "Data da primeira parcela") };
             }
           }
           if (!editing && deals) body.also_bought = drafts.slice(1).map(data);
@@ -759,7 +759,7 @@ export async function mount(container) {
   }
 
   function expenseDialog(house, expense) {
-    const date = h("input", { id: "e-date", type: "date", value: expense?.date || today() });
+    const date = dateInput({ id: "e-date" }, expense?.date || today());
     const category = select("e-category", CATEGORIES, expense?.category || "material");
     const description = h("input", { id: "e-description", maxLength: 120, value: expense?.description || "",
       placeholder: "Ex.: Cimento e areia" });
@@ -784,7 +784,7 @@ export async function mount(container) {
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
-        const body = { date: date.value, category: category.value, description: description.value,
+        const body = { date: dateValue(date, "Data"), category: category.value, description: description.value,
           supplier: supplier.value, amount_cents: cents(amount, "Valor"), area_id: area.value,
           paid_by: paidBy ? paidBy.value : "" };
         save.textContent = "Enviando fotos…";
@@ -863,7 +863,7 @@ export async function mount(container) {
   /** A moment of the timeline: its date, what it shows, the photos it has (each can be removed) and
    *  new ones (several at once). */
   function timelineDialog(house, entry) {
-    const date = h("input", { id: "t-date", type: "date", value: entry?.date || today() });
+    const date = dateInput({ id: "t-date" }, entry?.date || today());
     const caption = h("input", { id: "t-caption", maxLength: 200, value: entry?.caption || "",
       placeholder: "Ex.: Telhado novo instalado" });
     const kept = (entry?.photos || []).map((id, i) => ({ id, url: entry.photo_urls[i] }));
@@ -898,7 +898,7 @@ export async function mount(container) {
           photos.push(await uploadPhoto(house.id, file));
         }
         save.textContent = "Salvar";
-        const body = { date: date.value, caption: caption.value, photos };
+        const body = { date: dateValue(date, "Data"), caption: caption.value, photos };
         const view = entry ? await api("PUT", `/houses/${house.id}/timeline/${entry.id}`, body)
           : await api("POST", `/houses/${house.id}/timeline`, body);
         notify("Registro salvo.");
@@ -914,7 +914,7 @@ export async function mount(container) {
     const grouped = bundle.length > 1;
     const count = h("input", { id: "i-count", type: "number", min: 1, max: 600, value: 1, inputMode: "numeric" });
     const amount = h("input", { id: "i-amount", inputMode: "decimal", placeholder: "0,00" });
-    const first = h("input", { id: "i-first", type: "date", value: today() });
+    const first = dateInput({ id: "i-first" }, today());
     const save = h("button", { className: "primary" }, "Adicionar");
     const dialog = openDialog(`Prestações: ${house.name}`,
       h("div", { className: "two-columns" },
@@ -926,7 +926,7 @@ export async function mount(container) {
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
-        const body = { count: Number(count.value), amount_cents: cents(amount, "Valor de cada uma"), first_due_date: first.value };
+        const body = { count: Number(count.value), amount_cents: cents(amount, "Valor de cada uma"), first_due_date: dateValue(first, "Vencimento da primeira") };
         const view = await api("POST", `/houses/${house.id}/installments`, body);
         notify(body.count === 1 ? "Prestação adicionada." : `${body.count} prestações adicionadas.`);
         dialog.close();
@@ -939,10 +939,10 @@ export async function mount(container) {
   /** One installment: its due date, its amount and the day it was paid (empty: not paid). */
   function installmentDialog(house, inst, n, grouped = false) {
     grouped = grouped && Boolean(inst.group_id);
-    const due = h("input", { id: "i-due", type: "date", value: inst.due_date });
+    const due = dateInput({ id: "i-due" }, inst.due_date);
     const amount = h("input", { id: "i-value", inputMode: "decimal",
       value: centsToText(grouped ? inst.total_cents : inst.amount_cents) });
-    const paid = h("input", { id: "i-paid", type: "date", value: inst.paid_date });
+    const paid = dateInput({ id: "i-paid" }, inst.paid_date);
     const paidBy = paidBySelect("i-paid-by", inst.paid_date ? inst.paid_by || ctx.members[0].id : ctx.me);
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(`Prestação ${n}`,
@@ -955,8 +955,9 @@ export async function mount(container) {
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
-        const body = { due_date: due.value, amount_cents: grouped ? inst.amount_cents : cents(amount, "Valor"),
-          paid_date: paid.value, paid_by: paid.value && paidBy ? paidBy.value : "" };
+        const paidDate = dateValue(paid, "Paga em", false);
+        const body = { due_date: dateValue(due, "Vencimento"), amount_cents: grouped ? inst.amount_cents : cents(amount, "Valor"),
+          paid_date: paidDate, paid_by: paidDate && paidBy ? paidBy.value : "" };
         if (grouped) body.total_cents = cents(amount, "Valor total");
         const view = await api("PUT", `/houses/${house.id}/installments/${inst.id}`, body);
         notify("Prestação salva.");

@@ -60,6 +60,36 @@ export function formatPhone(phone) {
 /** "2026-11-20" -> "20/11/2026". */
 export const formatDate = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
+/** "20/11/2026" -> "2026-11-20"; "" if it is not a date that exists. */
+export function parseDate(text) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(text).trim());
+  if (!m) return "";
+  const iso = `${m[3]}-${m[2]}-${m[1]}`;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso ? iso : "";
+}
+
+/** A date field in the Brazilian format: you type the digits and "dd/mm/aaaa" is filled in. `.iso` is the
+ *  date as the API wants it ("2026-11-20"), "" while it is empty or not a real date. */
+export function dateInput(props = {}, iso = "") {
+  const input = h("input", { inputMode: "numeric", maxLength: 10, placeholder: "dd/mm/aaaa", autocomplete: "off",
+    ...props, value: iso ? formatDate(iso) : "" });
+  input.addEventListener("input", () => {
+    const d = input.value.replace(/\D/g, "").slice(0, 8);
+    input.value = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+  });
+  Object.defineProperty(input, "iso", { get: () => parseDate(input.value), set: (v) => { input.value = v ? formatDate(v) : ""; } });
+  return input;
+}
+
+/** The date typed in a dateInput as "2026-11-20"; throws with the field's name if it is not a date
+ *  ("" when it is empty and not required). */
+export function dateValue(input, label, required = true) {
+  if (!required && !input.value.trim()) return "";
+  if (!input.iso) throw new Error(`${label}: informe a data como dd/mm/aaaa`);
+  return input.iso;
+}
+
 /** Today in Brasília (UTC-3 all year), "YYYY-MM-DD", whatever the device's time zone. */
 export const today = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
 

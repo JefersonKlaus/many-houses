@@ -125,7 +125,7 @@ def run():
         expect(page.locator(".toast.error").last).to_contain_text("Nome")              # one step at a time
         page.fill("#h-name", "Casa Azul")
         page.fill("#h-address", "Rua das Flores, 10")
-        page.fill("#h-date", "2026-01-15")
+        page.fill("#h-date", "15/01/2026")                                    # Brazilian format
         page.click("#h-next")
         page.locator("#h-areas .chip", has_text="Cozinha").click()                      # areas: two suggestions
         page.locator("#h-areas .chip", has_text="Banheiros").click()
@@ -145,7 +145,7 @@ def run():
         page.fill("#h-down", "60.000")
         page.fill("#h-count", "3")
         page.fill("#h-amount", "80.000")
-        expect(page.locator("#h-first")).to_have_value("2026-02-15")                   # a month after the purchase
+        expect(page.locator("#h-first")).to_have_value("15/02/2026")                   # a month after the purchase
         expect(page.locator("#h-summary")).to_contain_text("3 × R$ 80.000,00 = R$ 300.000,00")
         calls = []
         page.on("request", lambda r: "/houses" in r.url and calls.append(f"{r.method} {r.url.split('/houses', 1)[1]}"))
@@ -303,6 +303,8 @@ def run():
         expect(partner.locator(".card.invite")).to_contain_text("Ana Lima ((11) 98765-4321) convidou você")
         expect(partner.locator(".card.invite")).to_contain_text("Casa Azul")
         partner.click(".card.invite >> text=Aceitar")
+        expect(partner.locator(".card.invite")).to_have_count(0)                        # accepted: in the list, not opened
+        partner.locator(".list-item", has_text="Casa Azul").click()
         expect(partner.locator("h1")).to_contain_text("Casa Azul")
         expect(partner.locator("button.danger:has-text('Excluir')")).to_have_count(1)    # partners are all equal
         expect(partner.locator("text=dono")).to_have_count(0)
@@ -392,6 +394,9 @@ def run():
         expect(page.locator("#by-member tbody tr").nth(1)).to_contain_text("100.000,00")   # theirs before accepting
         partner.reload()
         partner.click(".card.invite >> text=Aceitar")
+        expect(partner.locator("h1")).to_contain_text("Casas (1)")                         # not opened: it is in the list
+        expect(partner.locator(".card.invite")).to_have_count(0)
+        partner.locator(".list-item", has_text="Casa Verde").click()                   # and opens when they want
         expect(partner.locator("h1")).to_contain_text("Casa Verde")
         partner.click("#tab-partners")
         expect(partner.locator("#partners .members li").first).to_contain_text("Ana L. Souza")   # the name chosen
@@ -508,10 +513,12 @@ def run_without_login():
         page.click("#panel-renovation [aria-label='Próxima página']")
         expect(page.locator("#expenses tbody tr")).to_have_count(2)
 
-        # an invite waiting on top of the list: accepting it opens the house
+        # an invite waiting on top of the list: accepting it adds the house to the list, without opening it
         page.click("text=‹ Casas")
         expect(page.locator(".card.invite")).to_contain_text("Marcos Pereira ((11) 98888-7777) convidou você")
         page.click(".card.invite >> text=Aceitar")
+        expect(page.locator(".card.invite")).to_have_count(0)
+        page.locator(".list-item", has_text="Casa Vila Rica").click()
         expect(page.locator("h1")).to_contain_text("Casa Vila Rica")
         page.click("#tab-partners")
         expect(page.locator("#p-phone")).to_have_count(1)                              # a partner invites too
