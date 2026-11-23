@@ -357,12 +357,41 @@ def test_more_installments_for_a_deal_and_deleting_one_house_of_it(deps):
     assert all(i["group_id"] == "" and i["total_cents"] == 0 for i in view["installments"])
 
 
-def test_a_deal_has_no_partners_and_its_entrada_fits_the_prices(deps):
-    with pytest.raises(ValidationError):
-        create_house(deps, OWNER, deal_input(partners=[{"phone": "11987654321", "cents": 1}]))
+def test_a_deal_with_partners_spreads_what_each_paid_over_the_houses(deps):
+    # up front: entrada 75.000,00 (50.000 + 25.000) + costs 18.000 + 0 = 93.000,00 in all
+    payload = deal_input(purchase_costs_cents=1_800_000, owner_share_cents=4_000_000,
+                         partners=[{"phone": "11987654321", "cents": 5_300_000}])
+    view = create_house(deps, OWNER, payload)
+    houses = sorted(deps.repo.list_houses(OWNER), key=lambda h: h.id != view["house"]["id"])
+    assert len(houses) == 2 and all(len(h.invites) == 1 for h in houses)
+    for house in houses:                                       # each house's shares add up to what it cost up front
+        assert sum(s.cents for s in house.purchase_shares) == house.upfront_cents
+    assert sum(s.cents for h in houses for s in h.purchase_shares if s.member_id == "00000000") == 4_000_000
+    assert sum(s.cents for h in houses for s in h.purchase_shares if s.member_id != "00000000") == 5_300_000
+    assert len({i.id for h in houses for i in h.invites}) == 2     # an invite for each house, same phone
+    assert len(deps.repo.list_pending_invites("+5511987654321")) == 2
+    with pytest.raises(ValidationError):                       # the shares must close with the whole deal
+        create_house(deps, OWNER, deal_input(owner_share_cents=1, partners=[{"phone": "11987654322", "cents": 1}]))
+
+
+def test_a_deal_has_its_entrada_fit_the_prices(deps):
     with pytest.raises(ValidationError):
         create_house(deps, OWNER, deal_input(down_payment_cents=80_000_000))
     assert deps.repo.list_houses(OWNER) == []
-    first, _ = deal(deps)
-    with pytest.raises(ValidationError):
-        create_invite(deps, OWNER, first["house"]["id"], {"phone": "11987654321"})
+
+
+def test_paying_an_installment_of_a_deal_by_a_partner_is_the_same_partner_in_each_house(deps):
+    from accept_invite.use_case import accept_invite
+    payload = deal_input(owner_share_cents=2_500_000, partners=[{"phone": "11987654321", "cents": 5_000_000}])
+    view = create_house(deps, OWNER, payload)
+    houses = deps.repo.list_houses(OWNER)
+    for invite in deps.repo.list_pending_invites("+5511987654321"):
+        accept_invite(deps, "partner-1", invite.id, "+5511987654321", "Ana")
+    first = get_house(deps, "partner-1", view["house"]["id"])
+    inst = first["installments"][0]
+    update_installment(deps, "partner-1", view["house"]["id"], inst["id"], {**inst, "paid_date": "2026-02-09"})
+    other = next(h for h in houses if h.id != view["house"]["id"])
+    paid_by = {i.house_id: i.paid_by for i in deps.repo.list_installments(OWNER) if i.paid_date}
+    partner_of = lambda house: next(p.id for p in deps.repo.get_house(OWNER, house.id).partners)    # noqa: E731
+    assert paid_by == {view["house"]["id"]: partner_of(houses[0] if houses[0].id == view["house"]["id"] else other),
+                       other.id: partner_of(other)}

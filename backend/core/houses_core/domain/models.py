@@ -213,22 +213,19 @@ def brl(cents: int) -> str:
     return f"{'-' if cents < 0 else ''}R$ {whole:,}".replace(",", ".") + f",{rest:02d}"
 
 
-def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_phone: str,
-                         today: str) -> tuple[tuple[Invite, ...], tuple[Share, ...]]:
-    """When a house is registered as bought with partners: `partners` [{phone, cents}] and the owner's own
-    `owner_share_cents`, how much each one paid at the purchase. Each partner gets an invite; the shares
-    must add up to what was paid at the purchase (the split is only set here, in the act of buying)."""
+def _partner_amounts(payload: Mapping[str, Any], owner_phone: str) -> tuple[int, list[tuple[str, int]]]:
+    """`owner_share_cents` and `partners` [{phone, cents}] of the form: the owner's part and each partner's
+    (phone, cents), in order. No partners: (0, [])."""
     partners = payload.get("partners") or []
     if not isinstance(partners, list) or len(partners) > MAX_PARTNERS:
         raise ValidationError(f"sócios: no máximo {MAX_PARTNERS}")
     if not partners:
-        return (), ()
+        return 0, []
     def amount(value: Any) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_AMOUNT_CENTS:
             raise ValidationError("divisão da compra: informe quanto cada um pagou")
         return value
-    owner_share = amount(payload.get("owner_share_cents", 0))
-    invites, shares, seen = [], [Share(OWNER_MEMBER_ID, owner_share)] if owner_share else [], {owner_phone}
+    seen, pairs = {owner_phone}, []
     for partner in partners:
         if not isinstance(partner, Mapping):
             raise ValidationError("sócios: informe o celular e quanto cada um pagou")
@@ -236,16 +233,55 @@ def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_p
         if phone in seen:
             raise ValidationError("sócios: o mesmo celular aparece duas vezes (ou é o seu)")
         seen.add(phone)
-        invite = Invite(new_id(), phone, today)
-        invites.append(invite)
-        cents = amount(partner.get("cents"))
-        if cents:
-            shares.append(Share(invite.id, cents))
-    total = sum(s.cents for s in shares)
-    if total != upfront_cents:
-        raise ValidationError(f"divisão da compra: a soma ({brl(total)}) precisa fechar com o que foi pago "
-                              f"na compra ({brl(upfront_cents)})")
-    return tuple(invites), tuple(shares)
+        pairs.append((phone, amount(partner.get("cents"))))
+    return amount(payload.get("owner_share_cents", 0)), pairs
+
+
+def split_matrix(rows: list[int], columns: list[int]) -> list[list[int]]:
+    """How much of each row's total goes to each column, in proportion to the columns, with every row and
+    every column adding up exactly (the two totals must be equal). Used to spread what each buyer paid
+    over the houses of one deal, each house with its own total."""
+    whole = sum(columns) or 1
+    cells = [[row * column // whole for column in columns] for row in rows]
+    left_in_row = [row - sum(cells[i]) for i, row in enumerate(rows)]
+    left_in_column = [column - sum(cells[i][j] for i in range(len(rows))) for j, column in enumerate(columns)]
+    for i in range(len(rows)):              # the few cents lost to rounding go wherever there is room
+        for j in range(len(columns)):
+            moved = min(left_in_row[i], left_in_column[j])
+            cells[i][j] += moved
+            left_in_row[i] -= moved
+            left_in_column[j] -= moved
+    return cells
+
+
+def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_phone: str,
+                         today: str) -> tuple[tuple[Invite, ...], tuple[Share, ...]]:
+    """When a house is registered as bought with partners: `partners` [{phone, cents}] and the owner's own
+    `owner_share_cents`, how much each one paid at the purchase. Each partner gets an invite; the shares
+    must add up to what was paid at the purchase (the split is only set here, in the act of buying)."""
+    return bought_deal_with_partners(payload, [upfront_cents], owner_phone, today)[0]
+
+
+def bought_deal_with_partners(payload: Mapping[str, Any], upfronts: list[int], owner_phone: str,
+                              today: str) -> list[tuple[tuple[Invite, ...], tuple[Share, ...]]]:
+    """The same for the houses of one deal (`upfronts`: what was paid at each one's purchase): what each buyer
+    paid is spread over the houses in proportion to what each one cost up front, and every partner is invited
+    to each house. The shares must add up to everything paid at the purchase of all the houses."""
+    owner_share, pairs = _partner_amounts(payload, owner_phone)
+    if not pairs:
+        return [((), ())] * len(upfronts)
+    paid = [owner_share, *(cents for _, cents in pairs)]
+    if sum(paid) != sum(upfronts):
+        raise ValidationError(f"divisão da compra: a soma ({brl(sum(paid))}) precisa fechar com o que foi pago "
+                              f"na compra ({brl(sum(upfronts))})")
+    matrix = split_matrix(paid, upfronts)
+    result = []
+    for j in range(len(upfronts)):
+        invites = [Invite(new_id(), phone, today) for phone, _ in pairs]
+        shares = [Share(OWNER_MEMBER_ID, matrix[0][j])] if matrix[0][j] else []
+        shares += [Share(invite.id, matrix[i + 1][j]) for i, invite in enumerate(invites) if matrix[i + 1][j]]
+        result.append((tuple(invites), tuple(shares)))
+    return result
 
 
 @dataclass(frozen=True)

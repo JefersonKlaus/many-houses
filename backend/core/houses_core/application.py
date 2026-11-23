@@ -124,6 +124,15 @@ def group_siblings(repo: Repository, owner: str, installment: Installment) -> li
                   key=lambda i: i.house_id)
 
 
+def same_member(source: House, member_id: str, target: House) -> str:
+    """Who `member_id` of one house of a deal is in another house of it: the owner is the owner everywhere, a
+    partner is found by phone (each house has its own ids); "" (the owner) if they are not in the other."""
+    if member_id in ("", OWNER_MEMBER_ID):
+        return member_id
+    phone = next((m["phone"] for m in members(source) if m["id"] == member_id), None)
+    return next((m["id"] for m in members(target) if phone and m["phone"] == phone), "")
+
+
 def leave_bundle(repo: Repository, owner: str, house: House) -> None:
     """A house of a deal was deleted: what is left of the deal keeps its installments, now adding up to
     the houses that remain (and a house left alone is just a house again)."""

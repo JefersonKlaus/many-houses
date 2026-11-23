@@ -681,8 +681,10 @@ export async function mount(container) {
           "aria-label": "Tirar este sócio", onclick: () => { deal.partners.splice(i, 1); drawPartners(); updateSplit(); } }, "✕"));
       }));
       function updateSplit() {         // "Pago na compra R$ 318.000,00 · divisão: faltam R$ 18.000,00"
-        const paid = toCents((deal.type === "installments" ? deal.down : drafts[0].price) || "0");
-        const costs = toCents(drafts[0].costs || "0");
+        // paid at the purchase of every house of the deal: the cash prices or the (one) entrada, plus the costs
+        const paid = deal.type === "installments" ? toCents(deal.down || "0")
+          : drafts.reduce((sum, d) => (sum === null || toCents(d.price || "0") === null ? null : sum + toCents(d.price || "0")), 0);
+        const costs = drafts.reduce((sum, d) => (sum === null || toCents(d.costs || "0") === null ? null : sum + toCents(d.costs || "0")), 0);
         const total = paid === null || costs === null ? null : paid + costs;
         const parts = [deal.ownerShare, ...deal.partners.map((p) => p.cents)].map((v) => toCents(v || "0"));
         if (!total || parts.some((v) => v === null)) { split.textContent = ""; return; }
@@ -696,7 +698,10 @@ export async function mount(container) {
         h("button", { type: "button", className: "secondary small",
           onclick: () => { deal.partners.push({ phone: "", cents: "" }); drawPartners(); partnerRows.lastChild.querySelector(".p-phone").focus(); } }, "+ Sócio"),
         split,
-        h("p", { className: "muted hint" }, "Cada sócio recebe um convite no celular. A divisão da compra é definida só aqui, no cadastro."));
+        h("p", { className: "muted hint" }, deals
+          ? "Informe quanto cada um pagou no total (entrada + custos de todas as casas): a parte de cada um é dividida entre as casas. "
+            + "Cada sócio recebe um convite em cada casa."
+          : "Cada sócio recebe um convite no celular. A divisão da compra é definida só aqui, no cadastro."));
       drawPartners();
       for (const input of [ownerShare]) input.addEventListener("input", updateSplit);
       updateSplit();
@@ -723,7 +728,7 @@ export async function mount(container) {
             }
           }
           if (!editing && deals) body.also_bought = drafts.slice(1).map(data);
-          if (!editing && !deals && deal.buyers === "partners") {
+          if (!editing && deal.buyers === "partners") {
             body.owner_share_cents = money(deal.ownerShare, "Sua parte na compra", false);
             body.partners = deal.partners.map((p) => ({ phone: p.phone.trim(), cents: money(p.cents, "Quanto o sócio pagou", false) }));
             if (body.partners.length === 0) throw new Error("Sócios: adicione ao menos um, ou marque “Só eu”");
@@ -740,9 +745,8 @@ export async function mount(container) {
         h("fieldset", { className: "choices" }, h("legend", {}, "Forma de pagamento"),
           radio("cash", "À vista"), radio("installments", "Parcelado")),
         installments,
-        !editing && !deals && [h("fieldset", { className: "choices" }, h("legend", {}, "Quem comprou"),
+        !editing && [h("fieldset", { className: "choices" }, h("legend", {}, "Quem comprou"),
           buyersType("me", "Só eu"), buyersType("partners", "Com sócios")), buyersBox],
-        !editing && deals && h("p", { className: "muted hint" }, "Sócios: convide depois, em cada casa."),
         h("div", { className: "actions" }, h("button", { className: "secondary", onclick: () => go(drafts.length > 1 ? "casas" : "valor") }, "Voltar"), save));
     }
 

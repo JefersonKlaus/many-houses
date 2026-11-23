@@ -148,7 +148,7 @@ Rules worth knowing:
   installments, which carry `total_cents` (the whole installment) and a `group_id` linking the same month of
   every house. Paying, changing the due date or the total (`total_cents`, split again in the same
   proportion) or deleting one of them does the same to all. `bundle` in a house's page lists the houses and
-  their `percent`. A deal can't have partners. Deleting a house leaves the others with what is theirs.
+  their `percent`. Partners (`owner_share_cents`, `partners`) are for the whole deal: what each one paid is spread over the houses (each house's shares add up to what it cost up front) and each partner is invited to every house; whoever pays a shared installment is the same person (by phone) in each house. Deleting a house leaves the others with what is theirs.
 - Suggested sale price today = total invested (purchase + renovation) + `target_profit_percent` of it.
 - A house lists the areas that need renovation (`areas`: the names; the API gives each an id, kept
   while the name is the same, ignoring case). A cost may be linked to one (`area_id`). An area with
