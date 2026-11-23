@@ -3,7 +3,7 @@ partners' links and its pending invites. Any partner can: it is gone for all of 
 Depends only on the core's domain and ports, never on AWS."""
 from __future__ import annotations
 
-from houses_core.application import house_access
+from houses_core.application import house_access, leave_bundle
 from houses_core.ports import Dependencies
 
 
@@ -22,3 +22,4 @@ def delete_house(deps: Dependencies, user: str, id: str) -> None:
     for invite in house.invites:
         deps.repo.delete_pending_invite(invite.phone, invite.id)
     deps.repo.delete_house(owner, id)
+    leave_bundle(deps.repo, owner, house)

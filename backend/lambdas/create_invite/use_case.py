@@ -18,6 +18,8 @@ def create_invite(deps: Dependencies, user: str, house_id: str, payload: Mapping
     access = house_access(deps.repo, user, house_id)
     name = user_name(deps.repo, user, name)
     house = with_my_name(access, name)
+    if house.bundle_id:
+        raise ValidationError("esta casa foi comprada junto com outras: ainda não dá para convidar sócios")
     guest = phone_number(payload.get("phone"))
     if guest == phone:
         raise ValidationError("celular: esse é o seu número")

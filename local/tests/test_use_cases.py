@@ -6,6 +6,7 @@ from conftest import OTHER, OWNER, expense_input, house_input, plan_input
 from create_expense.use_case import create_expense
 from create_house.use_case import create_house
 from create_installments.use_case import create_installments
+from create_invite.use_case import create_invite
 from delete_expense.use_case import delete_expense
 from delete_house.use_case import delete_house
 from delete_installment.use_case import delete_installment
@@ -301,3 +302,67 @@ def test_an_area_with_costs_is_not_removed(deps):
     update_expense(deps, OWNER, hid, eid, expense_input())                              # the cost leaves the area
     view = update_house(deps, OWNER, hid, house_input(areas=["Sala"]))
     assert [a["name"] for a in view["house"]["areas"]] == ["Sala"]
+
+
+# ------------------------------------------------------------------ houses bought in one deal
+def deal_input(**extra):
+    """Two houses bought at once: 500 and 250 (thousand), one entrada and one plan for both."""
+    return house_input(**{"purchase_price_cents": 50_000_000, "purchase_costs_cents": 0,
+                          "payment_type": "installments", "down_payment_cents": 7_500_000,
+                          "installments": {"count": 2, "amount_cents": 1_000_000, "first_due_date": "2026-02-10"},
+                          "also_bought": [{"name": "Casa Verde", "address": "Rua B, 2",
+                                           "purchase_price_cents": 25_000_000}], **extra})
+
+
+def deal(deps):
+    view = create_house(deps, OWNER, deal_input())
+    other = next(h for h in deps.repo.list_houses(OWNER) if h.id != view["house"]["id"])
+    return view, get_house(deps, OWNER, other.id)
+
+
+def test_two_houses_in_one_deal_split_entrada_and_installments_by_price(deps):
+    first, second = deal(deps)
+    assert first["house"]["bundle_id"] == second["house"]["bundle_id"] != ""
+    assert (first["house"]["down_payment_cents"], second["house"]["down_payment_cents"]) == (5_000_000, 2_500_000)
+    assert [i["amount_cents"] for i in first["installments"]] == [666_667, 666_667]
+    assert [i["amount_cents"] for i in second["installments"]] == [333_333, 333_333]      # not a cent lost
+    assert {i["total_cents"] for i in first["installments"] + second["installments"]} == {1_000_000}
+    assert first["installments"][0]["group_id"] == second["installments"][0]["group_id"] != ""
+    assert [(b["name"], b["percent"]) for b in first["bundle"]] == [("Casa Azul", 66.67), ("Casa Verde", 33.33)] \
+        or [(b["name"], b["percent"]) for b in first["bundle"]] == [("Casa Verde", 33.33), ("Casa Azul", 66.67)]
+
+
+def test_installment_of_a_deal_changes_and_goes_together(deps):
+    first, second = deal(deps)
+    a, b = first["installments"][0], second["installments"][0]
+    view = update_installment(deps, OWNER, first["house"]["id"], a["id"], {**a, "paid_date": "2026-02-09"})
+    assert view["installments"][0]["paid_date"] == "2026-02-09"
+    assert get_house(deps, OWNER, second["house"]["id"])["installments"][0]["paid_date"] == "2026-02-09"
+    view = update_installment(deps, OWNER, first["house"]["id"], a["id"], {**a, "total_cents": 2_000_000})
+    other = get_house(deps, OWNER, second["house"]["id"])
+    assert (view["installments"][0]["amount_cents"], other["installments"][0]["amount_cents"]) == (1_333_334, 666_666)
+    assert other["installments"][0]["total_cents"] == 2_000_000 and view["installments"][1]["total_cents"] == 1_000_000
+    delete_installment(deps, OWNER, first["house"]["id"], a["id"])
+    assert len(get_house(deps, OWNER, second["house"]["id"])["installments"]) == 1
+    assert deps.repo.get_installment(OWNER, second["house"]["id"], b["id"]) is None
+
+
+def test_more_installments_for_a_deal_and_deleting_one_house_of_it(deps):
+    first, second = deal(deps)
+    view = create_installments(deps, OWNER, first["house"]["id"], plan_input(count=1, amount_cents=900_000))
+    assert len(view["installments"]) == 3 and len(get_house(deps, OWNER, second["house"]["id"])["installments"]) == 3
+    delete_house(deps, OWNER, second["house"]["id"])
+    view = get_house(deps, OWNER, first["house"]["id"])          # left alone: a house like any other again
+    assert view["bundle"] == [] and view["house"]["bundle_id"] == ""
+    assert all(i["group_id"] == "" and i["total_cents"] == 0 for i in view["installments"])
+
+
+def test_a_deal_has_no_partners_and_its_entrada_fits_the_prices(deps):
+    with pytest.raises(ValidationError):
+        create_house(deps, OWNER, deal_input(partners=[{"phone": "11987654321", "cents": 1}]))
+    with pytest.raises(ValidationError):
+        create_house(deps, OWNER, deal_input(down_payment_cents=80_000_000))
+    assert deps.repo.list_houses(OWNER) == []
+    first, _ = deal(deps)
+    with pytest.raises(ValidationError):
+        create_invite(deps, OWNER, first["house"]["id"], {"phone": "11987654321"})

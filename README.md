@@ -102,7 +102,7 @@ backend/
 | Route | What it does |
 |---|---|
 | `GET /houses` | every house, each with its totals (purchase, renovation, total) |
-| `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register (bought in installments: with its plan, `installments`; bought with partners: `owner_share_cents` and `partners` [{phone, cents}]), change, delete a house (with its costs) |
+| `POST /houses` · `PUT /houses/{id}` · `DELETE /houses/{id}` | register (bought in installments: with its plan, `installments`; bought with partners: `owner_share_cents` and `partners` [{phone, cents}]; bought together with other houses: `also_bought` [{name, address, purchase_price_cents, status, areas, notes, ...}]), change, delete a house (with its costs) |
 | `GET /houses/{id}` | one house: its costs (newest first), its installments (in due order) and its totals |
 | `POST /houses/{id}/expenses` | add a renovation cost |
 | `PUT` · `DELETE /houses/{id}/expenses/{expense_id}` | change, delete a renovation cost |
@@ -142,6 +142,13 @@ Rules worth knowing:
 - `payment_type` is `cash` or `installments`. In installments: entrada (`down_payment_cents`, at most
   the price) + installments, registered with the house and each one paid when it has a `paid_date`.
   Paid so far = entrada + the paid installments. A cash house has no entrada and takes no installment.
+- Several houses bought in one deal (`also_bought`): the entrada and the plan are for the whole deal, and each
+  house takes its part of the entrada and of every installment in proportion to its price (a 500 and a 250
+  house: 66,67 % and 33,33 %, no cent lost). The houses share a `bundle_id`; each house keeps its own
+  installments, which carry `total_cents` (the whole installment) and a `group_id` linking the same month of
+  every house. Paying, changing the due date or the total (`total_cents`, split again in the same
+  proportion) or deleting one of them does the same to all. `bundle` in a house's page lists the houses and
+  their `percent`. A deal can't have partners. Deleting a house leaves the others with what is theirs.
 - Suggested sale price today = total invested (purchase + renovation) + `target_profit_percent` of it.
 - A house lists the areas that need renovation (`areas`: the names; the API gives each an id, kept
   while the name is the same, ignoring case). A cost may be linked to one (`area_id`). An area with

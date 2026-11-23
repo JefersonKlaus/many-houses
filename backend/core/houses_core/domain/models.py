@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from typing import Any, Mapping, Optional
 
@@ -23,6 +23,7 @@ PAYMENT_TYPES = ("cash", "installments")                                  # à v
 MAX_PROFIT_PERCENT = 1000
 MAX_AREAS = 30
 MAX_PARTNERS = 10
+MAX_BUNDLE_HOUSES = 10          # houses bought at once, in one deal
 MAX_TIMELINE_PHOTOS = 12        # photos in one timeline entry
 OWNER_MEMBER_ID = "00000000"    # the house's owner among its members (in `paid_by` and in the purchase shares)
 _PHONE_RE = re.compile(r"^[1-9]{2}\d{8,9}$")
@@ -40,7 +41,7 @@ FIELD_LABELS = {
     "first_due_date": "primeiro vencimento", "count": "quantidade", "payment_type": "forma de pagamento",
     "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área", "paid_by": "pago por",
     "phone": "celular", "nf_photo": "foto da NF", "material_photo": "foto do material ou serviço",
-    "caption": "descrição", "default_profit_percent": "lucro desejado padrão",
+    "caption": "descrição", "default_profit_percent": "lucro desejado padrão", "total_cents": "valor total da parcela",
 }
 
 
@@ -65,6 +66,19 @@ def add_months(iso: str, months: int) -> str:
     next_month = date(year + month // 12, month % 12 + 1, 1)
     last_day = (next_month - date.resolution).day
     return date(year, month, min(d.day, last_day)).isoformat()
+
+
+def split_cents(total: int, weights: list[int]) -> list[int]:
+    """Splits `total` cents in proportion to `weights` (a house of 500 and another of 250: two thirds and
+    one third), with no cent lost: the leftover cents go to the biggest remainders. All weights 0: equal parts."""
+    if not any(weights):
+        weights = [1] * len(weights)
+    whole = sum(weights)
+    parts = [total * w // whole for w in weights]
+    by_remainder = sorted(range(len(weights)), key=lambda n: (-(total * weights[n] % whole), n))
+    for n in by_remainder[:total - sum(parts)]:
+        parts[n] += 1
+    return parts
 
 
 def _text(payload: Mapping[str, Any], field: str, max_length: int = 80, required: bool = True) -> str:
@@ -278,6 +292,7 @@ class House:
     invites: tuple[Invite, ...] = ()
     purchase_shares: tuple[Share, ...] = ()     # set at registration; empty: the owner paid the whole purchase
     owner_name: str = ""
+    bundle_id: str = ""             # houses bought in one deal share it ("compra conjunta"); "" = bought alone
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None,
@@ -296,7 +311,34 @@ class House:
                    _percent(payload, "target_profit_percent"), _areas(payload, previous.areas if previous else ()),
                    previous.owner_phone if previous else "", previous.partners if previous else (),
                    previous.invites if previous else (), previous.purchase_shares if previous else (),
-                   previous.owner_name if previous else "")
+                   previous.owner_name if previous else "", previous.bundle_id if previous else "")
+
+    @classmethod
+    def bundle_from_input(cls, payload: Mapping[str, Any], also: Any) -> list["House"]:
+        """The house of the form plus the others bought in the same deal (`also`: [{name, address,
+        purchase_price_cents, purchase_costs_cents, areas, notes, status, target_profit_percent}]). The date and
+        the payment type are the deal's. The entrada is one for the whole deal: each house takes its part of it in
+        proportion to its price. Without `also`, just the one house."""
+        if not also:
+            return [cls.from_input(payload)]
+        if not isinstance(also, list) or len(also) + 1 > MAX_BUNDLE_HOUSES:
+            raise ValidationError(f"casas da mesma compra: no máximo {MAX_BUNDLE_HOUSES}")
+        if any(not isinstance(item, Mapping) for item in also):
+            raise ValidationError("casas da mesma compra: informe nome, endereço e valor de cada uma")
+        items = [payload, *also]
+        prices = [_cents(item, "purchase_price_cents") for item in items]
+        payment_type = _choice(payload, "payment_type", PAYMENT_TYPES, "cash")
+        down = _cents(payload, "down_payment_cents", required=False) if payment_type == "installments" else 0
+        if down > sum(prices):
+            raise ValidationError("entrada: não pode ser maior que a soma dos valores dos imóveis")
+        bundle_id = new_id()
+        deal = {k: payload[k] for k in ("purchase_date", "payment_type") if k in payload}
+        houses = []
+        for item, share in zip(items, split_cents(down, prices)):
+            own = {k: item[k] for k in ("name", "address", "purchase_price_cents", "purchase_costs_cents", "notes",
+                                        "areas", "status", "target_profit_percent") if k in item}
+            houses.append(replace(cls.from_input({**deal, **own, "down_payment_cents": share}), bundle_id=bundle_id))
+        return houses
 
     @property
     def upfront_cents(self) -> int:
@@ -331,7 +373,7 @@ class House:
                    tuple(Partner(p["id"], p["user"], p["phone"], p.get("name", "")) for p in d.get("partners", ())),
                    tuple(Invite(i["id"], i["phone"], i["date"]) for i in d.get("invites", ())),
                    tuple(Share(s["member_id"], s["cents"]) for s in d.get("purchase_shares", ())),
-                   d.get("owner_name", ""))
+                   d.get("owner_name", ""), d.get("bundle_id", ""))
 
 
 @dataclass(frozen=True)
@@ -383,6 +425,8 @@ class Installment:
     amount_cents: int
     paid_date: str = ""
     paid_by: str = ""               # the member who paid it (when paid); "" = the owner
+    group_id: str = ""              # the installments of the same month of houses bought in one deal share it
+    total_cents: int = 0            # that month's whole installment (all the houses); 0 = not in a group
 
     @property
     def paid(self) -> bool:
@@ -406,13 +450,36 @@ class Installment:
         amount = _cents(payload, "amount_cents", minimum=1)
         return [cls(new_id(), house_id, add_months(first, n), amount) for n in range(count)]
 
+    @classmethod
+    def plan_group(cls, payload: Mapping[str, Any], houses: list["House"]) -> list["Installment"]:
+        """The same plan for houses bought in one deal: `amount_cents` is the whole installment, and each
+        house gets its part of it in proportion to its price (a 500 and a 250 house: two thirds and one third)."""
+        planned, weights = cls.plan(payload, houses[0].id), [h.purchase_price_cents for h in houses]
+        installments = []
+        for month in planned:
+            group = new_id()
+            for house, cents in zip(houses, split_cents(month.amount_cents, weights)):
+                installments.append(cls(new_id(), house.id, month.due_date, cents, group_id=group,
+                                        total_cents=month.amount_cents))
+        return installments
+
+    @staticmethod
+    def edit_group(siblings: list["Installment"], edited: "Installment",
+                   payload: Mapping[str, Any]) -> list["Installment"]:
+        """One installment of a group was edited: its due date and payment are everyone's, and a new
+        `total_cents` is split again among the houses in the proportion they already had."""
+        total = _cents(payload, "total_cents", minimum=1) if "total_cents" in payload else siblings[0].total_cents
+        parts = split_cents(total, [s.amount_cents for s in siblings])
+        return [replace(s, due_date=edited.due_date, paid_date=edited.paid_date, paid_by=edited.paid_by,
+                        amount_cents=cents, total_cents=total) for s, cents in zip(siblings, parts)]
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "Installment":
         return cls(d["id"], d["house_id"], d["due_date"], d["amount_cents"], d.get("paid_date", ""),
-                   d.get("paid_by", ""))
+                   d.get("paid_by", ""), d.get("group_id", ""), d.get("total_cents", 0))
 
 
 @dataclass(frozen=True)

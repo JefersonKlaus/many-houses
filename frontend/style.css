@@ -111,6 +111,14 @@ fieldset.choices legend { padding: 0; margin-bottom: 4px; font-size: .9rem; colo
 .choice:has(input:focus-visible) { outline: 3px solid var(--brand); outline-offset: 2px; }
 .installments-fields { margin-top: 4px; padding: 0 12px 10px; border: 1px solid var(--border); border-top: 0;
   border-radius: 0 0 8px 8px; }
+/* the house form's steps */
+.stepper { display: flex; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; flex-wrap: wrap; }
+.stepper li { border: 1px solid var(--border); border-radius: 999px; font-size: .85rem; }
+.stepper li.current { border-color: var(--brand); background: var(--brand-light); }
+.step-button { display: inline-block; padding: 4px 14px; border: 0; border-radius: 999px; background: none; font: inherit; color: var(--muted); }
+button.step-button { cursor: pointer; }
+.stepper li.current .step-button { color: var(--brand); font-weight: 600; }
+.step-button:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
 /* the areas of a house: checkable chips, and one more typed in */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border: 1px solid var(--border);

@@ -44,7 +44,8 @@ export async function mount(container) {
       onclick: () => detail(x.id), onkeydown: (e) => { if (e.key === "Enter") detail(x.id); } },
     h("div", { className: "list-main" },
       h("div", { className: "list-title" }, h("strong", {}, x.name, badge(x.status),
-        (x.role === "partner" || x.partners.length > 0) && h("span", { className: "badge partner" }, "Com sócios")),
+        (x.role === "partner" || x.partners.length > 0) && h("span", { className: "badge partner" }, "Com sócios"),
+        x.bundle_id && h("span", { className: "badge partner" }, "Compra conjunta")),
         h("strong", { className: "amount" }, formatMoney(x.totals.total_cents))),
       h("div", { className: "list-title muted" }, h("span", {}, x.address),
         h("span", {}, `compra ${formatMoney(x.totals.purchase_cents)} · reforma ${formatMoney(x.totals.renovation_cents)}`,
@@ -71,7 +72,7 @@ export async function mount(container) {
     await whileDisabled(e.currentTarget, async () => {
       let defaults = { default_profit_percent: 0 };
       try { defaults = await api("GET", "/settings"); } catch { /* without them the field just starts empty */ }
-      houseDialog(null, show, defaults);
+      houseForm(null, defaults);
     });
   }
 
@@ -135,7 +136,7 @@ export async function mount(container) {
       h("div", { className: "row" },
         h("div", {}, h("h1", {}, house.name, badge(house.status)), h("p", { className: "muted address" }, house.address)),
         h("div", { className: "actions tight" },
-          h("button", { className: "secondary", onclick: () => houseDialog(house, show) }, "Editar casa"),
+          h("button", { className: "secondary", onclick: () => houseForm(house) }, "Editar casa"),
           h("button", { className: "danger", onclick: remove }, "Excluir"))),
       h("div", { className: "totals", id: "house-totals" },
         tile("Compra", formatMoney(totals.purchase_cents)),
@@ -144,10 +145,10 @@ export async function mount(container) {
       saleCard(house, totals),
       tabs(house.id, [
         ["renovation", "Reforma", () => [areasCard(house, totals), categoriesCard(totals), expensesCard(house, expenses, totals)]],
-        ["purchase", "Compra", () => [purchaseCard(house, totals.payment)]],
+        ["purchase", "Compra", () => [purchaseCard(house, totals.payment, view.bundle)]],
         house.payment_type === "installments" && ["installments",
           `Prestações (${totals.payment.paid_count}/${totals.payment.installments_count})`,
-          () => [installmentsCard(house, installments, totals.payment)]],
+          () => [installmentsCard(house, installments, totals.payment, view.bundle)]],
         ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view), investmentCard(view)]],
         ["timeline", view.timeline.length ? `Timeline (${view.timeline.length})` : "Timeline", () => [timelineCard(house, view.timeline)]],
       ]));
@@ -200,12 +201,17 @@ export async function mount(container) {
         + `${formatMoney(sale.target_profit_cents)}. O valor sobe a cada custo de reforma lançado.`));
   }
 
-  function purchaseCard(house, payment) {
+  /** "Casa Azul 66,67 % · Casa Verde 33,33 %": the houses bought in the same deal and each one's share. */
+  const bundleText = (bundle) => bundle.map((b) => `${b.name} ${percentText(b.percent)} %`).join(" · ");
+
+  function purchaseCard(house, payment, bundle = []) {
     const financed = house.payment_type === "installments";
     return h("div", { className: "card", id: "purchase" }, h("h2", {}, "Compra"),
       h("dl", { className: "details" },
         h("dt", {}, "Data"), h("dd", {}, formatDate(house.purchase_date)),
         h("dt", {}, "Pagamento"), h("dd", {}, financed ? "Parcelado" : "À vista"),
+        bundle.length > 1 && [h("dt", {}, "Compra conjunta"), h("dd", {}, bundleText(bundle),
+          h("span", { className: "muted" }, " (a entrada e as prestações são divididas nessa proporção, pelo valor de cada imóvel)"))],
         h("dt", {}, "Valor do imóvel"), h("dd", {}, formatMoney(house.purchase_price_cents)),
         financed && [
           h("dt", {}, "Entrada"), h("dd", {}, formatMoney(payment.down_payment_cents)),
@@ -219,8 +225,9 @@ export async function mount(container) {
 
   /** The prestações of the purchase: how much is paid, what is left, and each one with its state.
    *  A long plan (120, 360...) is shown a page at a time, opening on the page of the next one to pay. */
-  function installmentsCard(house, installments, payment) {
-    const add = h("button", { className: "primary small", onclick: () => planDialog(house) }, "Adicionar prestações");
+  function installmentsCard(house, installments, payment, bundle = []) {
+    const grouped = bundle.length > 1;
+    const add = h("button", { className: "primary small", onclick: () => planDialog(house, bundle) }, "Adicionar prestações");
     const card = h("div", { className: "card", id: "installments" }, h("div", { className: "row" }, h("h2", {}, "Prestações"), add));
     if (installments.length === 0) {
       card.append(h("p", { className: "muted" },
@@ -233,7 +240,9 @@ export async function mount(container) {
       catch (error) { notify(error.message, true); }
     };
     const remove = async (inst, n) => {
-      if (!confirm(`Excluir a prestação ${n} (${formatMoney(inst.amount_cents)}, vence ${formatDate(inst.due_date)})?`)) return;
+      if (!confirm(grouped && inst.group_id
+        ? `Excluir a prestação ${n} (${formatMoney(inst.total_cents)}, vence ${formatDate(inst.due_date)}) de todas as casas desta compra?`
+        : `Excluir a prestação ${n} (${formatMoney(inst.amount_cents)}, vence ${formatDate(inst.due_date)})?`)) return;
       try { show(await api("DELETE", `/houses/${house.id}/installments/${inst.id}`)); notify("Prestação excluída."); }
       catch (error) { notify(error.message, true); }
     };
@@ -246,11 +255,14 @@ export async function mount(container) {
       const n = `${index + 1}/${installments.length}`;
       return h("tr", { className: inst.paid_date ? "paid" : null },
         h("td", { title: n }, index + 1), h("td", {}, formatDate(inst.due_date)),
-        h("td", { className: "num" }, formatMoney(inst.amount_cents)), h("td", {}, state(inst)),
+        grouped && h("td", { className: "num" }, inst.group_id ? formatMoney(inst.total_cents) : "–"),
+        h("td", { className: "num" }, formatMoney(inst.amount_cents),
+          grouped && inst.group_id && inst.total_cents > 0 && h("small", { className: "muted" }, ` ${percent(inst.amount_cents, inst.total_cents)}`)),
+        h("td", {}, state(inst)),
         h("td", {}, actionsMenu(`prestação ${n}`, [
           inst.paid_date ? { text: "Desmarcar pagamento", onclick: change(inst, { paid_date: "", paid_by: "" }, "Pagamento desmarcado.") }
             : { text: "Marcar como paga hoje", onclick: change(inst, { paid_date: now, paid_by: ctx.me }, "Prestação paga.") },
-          { text: "Editar", onclick: () => installmentDialog(house, inst, n) },
+          { text: "Editar", onclick: () => installmentDialog(house, inst, n, grouped) },
           { text: "Excluir", danger: true, onclick: () => remove(inst, n) }])));
     });
 
@@ -260,6 +272,9 @@ export async function mount(container) {
     const progress = h("span", { className: "bar-fill paid-fill" });
     progress.style.width = `${((100 * payment.paid_count) / payment.installments_count).toFixed(1)}%`;   // CSSOM: allowed by the CSP
     card.append(
+      grouped && h("p", { className: "muted hint", id: "bundle-note" },
+        `Compra conjunta: cada parcela é paga uma vez só, pelas ${bundle.length} casas (${bundleText(bundle)}). `
+        + "Marcar como paga, mudar o vencimento ou excluir vale para todas."),
       h("div", { className: "totals" },
         tile("Pagas", `${payment.paid_count} de ${payment.installments_count}`, formatMoney(payment.paid_cents)),
         tile("Falta pagar", formatMoney(payment.open_cents),
@@ -267,7 +282,9 @@ export async function mount(container) {
         tile("Pago da compra", formatMoney(payment.total_paid_cents), "entrada + prestações pagas")),
       h("span", { className: "bar", title: percent(payment.paid_count, payment.installments_count) }, progress),
       h("div", { className: "table-scroll" }, h("table", { className: "money", id: "installments-table" },
-        h("thead", {}, h("tr", {}, ["Nº", "Vencimento", "Valor", "Situação", ""].map((c) => h("th", { className: c === "Valor" ? "num" : null }, c)))),
+        h("thead", {}, h("tr", {}, [
+          "Nº", "Vencimento", grouped && "Parcela total", grouped ? "Desta casa" : "Valor", "Situação", ""].filter((c) => c !== false).map((c) =>
+          h("th", { className: ["Valor", "Parcela total", "Desta casa"].includes(c) ? "num" : null }, c)))),
         body)),
       pager);
     return card;
@@ -445,171 +462,296 @@ export async function mount(container) {
     return value;
   }
 
-  function houseDialog(house, onSaved, defaults = {}) {
-    const name = h("input", { id: "h-name", maxLength: 80, value: house?.name || "", placeholder: "Ex.: Casa da Rua das Flores" });
-    const address = h("input", { id: "h-address", maxLength: 200, value: house?.address || "" });
-    const date = h("input", { id: "h-date", type: "date", value: house?.purchase_date || today() });
-    const price = h("input", { id: "h-price", inputMode: "decimal", placeholder: "0,00",
-      value: house ? centsToText(house.purchase_price_cents) : "" });
-    const costs = h("input", { id: "h-costs", inputMode: "decimal", placeholder: "0,00",
-      value: house ? centsToText(house.purchase_costs_cents) : "" });
-    const status = select("h-status", STATUS, house?.status || "renovating");
-    const notes = h("textarea", { id: "h-notes", maxLength: 2000, rows: 3, value: house?.notes || "" });
-    const profit = h("input", { id: "h-profit", inputMode: "decimal", placeholder: "Ex.: 30",
-      value: house ? (house.target_profit_percent ? percentText(house.target_profit_percent) : "")
-        : defaults.default_profit_percent ? percentText(defaults.default_profit_percent) : "" });
+  // ------------------------------------------------------------------ the house form (a page, one thing at a time)
+  /** Register (house = null) or edit a house, as a page with one responsibility per step:
+   *  1. the house's data (name, address, date, situation), 2. the areas to renovate, 3. the value (price,
+   *  costs of buying it, profit wanted, notes). Registering, a step "Casas desta compra" follows: another house
+   *  can be added (it asks for everything again) and, last, the payment: how it is paid, the entrada, the
+   *  installments and who bought it. Editing goes from the value straight to how it is paid. */
+  function houseForm(house, defaults = {}) {
+    const editing = Boolean(house);
+    const draftOf = (x) => ({ name: x.name, address: x.address, status: x.status, areas: x.areas.map((a) => a.name),
+      price: centsToText(x.purchase_price_cents), costs: x.purchase_costs_cents ? centsToText(x.purchase_costs_cents) : "",
+      profit: x.target_profit_percent ? percentText(x.target_profit_percent) : "", notes: x.notes });
+    const blank = () => ({ name: "", address: "", status: "renovating", areas: [], price: "", costs: "", notes: "",
+      profit: defaults.default_profit_percent ? percentText(defaults.default_profit_percent) : "" });
+    const drafts = [editing ? draftOf(house) : blank()];
+    const deal = { date: house?.purchase_date || today(), type: house?.payment_type || "cash",
+      down: house?.down_payment_cents ? centsToText(house.down_payment_cents) : "", count: "", amount: "", first: "",
+      firstTyped: false, buyers: "me", ownerShare: "", partners: [{ phone: "", cents: "" }] };
+    deal.first = addMonth(deal.date);
+    let current = 0;                       // the house being filled in
+    let step = "dados";                    // dados · reforma · valor · casas · pagamento
 
-    // the areas that need renovation: the house's own first (checked), then the suggestions not used yet
-    const chips = h("div", { className: "chips", id: "h-areas" });
-    const addChip = (name, checked) => chips.append(h("label", { className: "chip" },
-      h("input", { type: "checkbox", value: name, checked }), name));
-    const has = (name) => [...chips.querySelectorAll("input")].some((i) => i.value.toLowerCase() === name.toLowerCase());
-    for (const area of house?.areas || []) addChip(area.name, true);
-    for (const name of AREA_SUGGESTIONS) if (!has(name)) addChip(name, false);
-    const otherArea = h("input", { id: "h-other-area", maxLength: 40, placeholder: "Outra área (ex.: Edícula)" });
-    const addOther = () => {
-      const name = otherArea.value.trim().replace(/\s+/g, " ");
-      if (!name) return;
-      const existing = [...chips.querySelectorAll("input")].find((i) => i.value.toLowerCase() === name.toLowerCase());
-      if (existing) existing.checked = true; else addChip(name, true);
-      otherArea.value = "";
-      otherArea.focus();
+    const back = () => (editing ? detail(house.id) : list());
+    const bind = (input, object, key) => { input.addEventListener("input", () => { object[key] = input.value; }); return input; };
+    const money = (text, label, required = true) => {      // "1.234,56" -> cents, or throws with the field's name
+      if (!required && !text.trim()) return 0;
+      const value = toCents(text);
+      if (value === null) throw new Error(`${label}: informe um valor como 1.234,56`);
+      return value;
     };
-    otherArea.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addOther(); } });
-    const areas = h("div", {},
-      h("label", { htmlFor: "h-other-area" }, "Áreas que precisam de reforma"), chips,
-      h("div", { className: "inline-add" }, otherArea,
-        h("button", { type: "button", className: "secondary small", onclick: addOther }, "Adicionar")));
+    const houseLabel = (x, i) => x.name.trim() || `Casa ${i + 1}`;
+    const go = (next) => { step = next; draw(); window.scrollTo(0, 0); };
+    /** Another house of the same deal (same date and payment): it asks for all its data again. */
+    const addAnother = () => { drafts.push({ ...blank(), profit: drafts[0].profit }); current = drafts.length - 1; go("dados"); };
 
-    // how it was paid: à vista, or parcelado with the entrada and (when registering) the installments
-    const paymentType = house?.payment_type || "cash";
-    const radio = (value, text) => h("label", { className: "choice" },
-      h("input", { type: "radio", name: "h-payment", value, checked: value === paymentType, onchange: toggle }), text);
-    const down = h("input", { id: "h-down", inputMode: "decimal", placeholder: "0,00",
-      value: house?.down_payment_cents ? centsToText(house.down_payment_cents) : "" });
-    const count = h("input", { id: "h-count", type: "number", min: 1, max: 600, inputMode: "numeric", placeholder: "Ex.: 120" });
-    const amount = h("input", { id: "h-amount", inputMode: "decimal", placeholder: "0,00" });
-    const first = h("input", { id: "h-first", type: "date" });
-    const summary = h("p", { className: "muted hint", id: "h-summary" });
-    const installments = h("div", { className: "installments-fields" },
-      h("div", { className: "two-columns" },
-        h("div", {}, field("h-down", "Entrada (R$)", down)),
-        !house && [
-          h("div", {}, field("h-count", "Quantidade de parcelas", count)),
-          h("div", {}, field("h-amount", "Valor de cada parcela (R$)", amount)),
-          h("div", {}, field("h-first", "Data da primeira parcela", first))]),
-      house ? h("p", { className: "muted hint" }, "As prestações são alteradas na página da casa.") : summary);
-    const chosen = () => dialog.querySelector("input[name=h-payment]:checked").value;
-    function toggle() { installments.hidden = chosen() !== "installments"; }
-    function updateSummary() {          // "Entrada R$ 60.000,00 + 120 × R$ 2.000,00 = R$ 300.000,00"
-      const n = Number(count.value), each = toCents(amount.value), entrada = toCents(down.value || "0");
-      summary.textContent = n > 0 && each !== null && entrada !== null
-        ? `Entrada ${formatMoney(entrada)} + ${n} × ${formatMoney(each)} = ${formatMoney(entrada + n * each)}` : "";
+    function header() {
+      // every step is always there; editing opens any of them at once, a new house goes one by one (Continuar / Voltar)
+      const all = [["dados", "Dados"], ["reforma", "Reforma"], ["valor", "Valor"], ["casas", "Casas"], ["pagamento", "Pagamento"]]
+        .filter(([key]) => key !== "casas" || (!editing && drafts.length > 1));
+      const stepper = h("ol", { className: "stepper", "aria-label": "Passos do cadastro" }, all.map(([key, label]) =>
+        h("li", { className: key === step ? "current" : null, "aria-current": key === step ? "step" : null },
+          editing ? h("button", { type: "button", className: "step-button", onclick: () => go(key) }, label)
+            : h("span", { className: "step-button" }, label))));
+      const many = drafts.length > 1;
+      return [h("button", { className: "link back", onclick: back }, editing ? `‹ ${house.name}` : "‹ Casas"),
+        h("h1", {}, editing ? `Editar ${house.name}` : "Nova casa"),
+        ["dados", "reforma", "valor"].includes(step) && !editing && many
+          && h("p", { className: "muted", id: "h-which" }, `Casa ${current + 1} de ${drafts.length}: ${houseLabel(drafts[current], current)}`),
+        stepper];
     }
-    for (const input of [down, count, amount]) input.addEventListener("input", updateSummary);
-    // the first installment: a month after the purchase, following the purchase date until it is typed in
-    let firstTyped = false;
-    first.addEventListener("input", () => { firstTyped = true; });
-    const followPurchase = () => { if (!firstTyped) first.value = addMonth(date.value); };
-    date.addEventListener("input", followPurchase);
-    date.addEventListener("change", followPurchase);
-    followPurchase();
 
-    // who bought it: only me, or with partners and how much each one paid at the purchase (only when registering:
-    // the split is set here, in the act of buying, and can't be changed later)
-    const buyersType = (value, text) => h("label", { className: "choice" },
-      h("input", { type: "radio", name: "h-buyers", value, checked: value === "me", onchange: toggleBuyers }), text);
-    const ownerShare = h("input", { id: "h-owner-share", inputMode: "decimal", placeholder: "0,00" });
-    const partnerRows = h("div", { id: "h-partners" });
-    const split = h("p", { className: "muted hint", id: "h-split" });
-    const addPartner = () => {
-      const row = h("div", { className: "partner-row" },
-        h("input", { className: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "Celular",
-          "aria-label": "Celular do sócio (DDD + número)" }),
-        h("input", { className: "p-cents", inputMode: "decimal", placeholder: "Valor (R$)", "aria-label": "Quanto o sócio pagou (R$)" }),
-        h("button", { type: "button", className: "link danger-link", "aria-label": "Tirar este sócio",
-          onclick: () => { row.remove(); updateSplit(); } }, "✕"));
-      row.querySelector(".p-cents").addEventListener("input", updateSplit);
-      partnerRows.append(row);
-      row.querySelector(".p-phone").focus();
-    };
-    const buyers = h("div", { className: "installments-fields buyers-fields" },
-      field("h-owner-share", "Sua parte na compra (R$)", ownerShare),
-      h("label", {}, "Sócios: celular e quanto cada um pagou na compra"), partnerRows,
-      h("button", { type: "button", className: "secondary small", onclick: addPartner }, "+ Sócio"),
-      split,
-      h("p", { className: "muted hint" }, "Cada sócio recebe um convite no celular. A divisão da compra é definida só aqui, no cadastro."));
-    const upfront = () => {          // what was paid at the purchase: the cash price or the entrada, plus the costs
-      const paid = toCents((chosen() === "installments" ? down.value : price.value) || "0");
-      const c = toCents(costs.value || "0");
-      return paid === null || c === null ? null : paid + c;
-    };
-    function updateSplit() {         // "Pago na compra R$ 318.000,00 · divisão: faltam R$ 18.000,00"
-      const total = upfront();
-      const parts = [ownerShare, ...partnerRows.querySelectorAll(".p-cents")].map((i) => toCents(i.value || "0"));
-      if (!total || parts.some((v) => v === null)) { split.textContent = ""; return; }     // nothing to split yet
-      const sum = parts.reduce((a, b) => a + b, 0);
-      split.textContent = `Pago na compra: ${formatMoney(total)} · `
-        + (sum === total ? "a divisão fecha." : `${sum < total ? "faltam" : "passam"} ${formatMoney(Math.abs(total - sum))}.`);
+    // ---- 1. the house's data
+    function stepData() {
+      const d = drafts[current];
+      const name = bind(h("input", { id: "h-name", maxLength: 80, value: d.name, placeholder: "Ex.: Casa da Rua das Flores" }), d, "name");
+      const address = bind(h("input", { id: "h-address", maxLength: 200, value: d.address }), d, "address");
+      const status = select("h-status", STATUS, d.status);
+      status.addEventListener("change", () => { d.status = status.value; });
+      const date = h("input", { id: "h-date", type: "date", value: deal.date });
+      date.addEventListener("input", () => { deal.date = date.value; if (!deal.firstTyped) deal.first = addMonth(date.value); });
+      const next = h("button", { className: "primary", id: "h-next" }, "Continuar: pontos de reforma");
+      next.onclick = () => {
+        if (!d.name.trim()) return notify("Nome: preencha este campo", true);
+        if (!d.address.trim()) return notify("Endereço: preencha este campo", true);
+        if (!deal.date) return notify("Data da compra: informe a data", true);
+        go("reforma");
+      };
+      return h("div", { className: "card form-step" }, h("h2", {}, "Dados da casa"),
+        field("h-name", "Nome", name), field("h-address", "Endereço", address),
+        h("div", { className: "two-columns" },
+          current === 0 ? h("div", {}, field("h-date", "Data da compra", date)) : h("div", {}, h("p", { className: "muted hint" },
+            `Data da compra: ${formatDate(deal.date)}, a mesma da primeira casa.`)),
+          h("div", {}, field("h-status", "Situação", status))),
+        h("div", { className: "actions" }, next));
     }
-    function toggleBuyers() {
-      const together = dialog.querySelector("input[name=h-buyers]:checked").value === "partners";
-      buyers.hidden = !together;
-      if (together && !partnerRows.children.length) addPartner();
+
+    // ---- 2. the areas that need renovation
+    function stepAreas() {
+      const d = drafts[current];
+      const chips = h("div", { className: "chips", id: "h-areas" });
+      const addChip = (name) => {
+        const input = h("input", { type: "checkbox", value: name, checked: d.areas.some((a) => a.toLowerCase() === name.toLowerCase()) });
+        input.addEventListener("change", () => {
+          d.areas = input.checked ? [...d.areas, name] : d.areas.filter((a) => a.toLowerCase() !== name.toLowerCase());
+        });
+        chips.append(h("label", { className: "chip" }, input, name));
+      };
+      const known = (name) => [...chips.querySelectorAll("input")].some((i) => i.value.toLowerCase() === name.toLowerCase());
+      for (const name of d.areas) addChip(name);
+      for (const name of AREA_SUGGESTIONS) if (!known(name)) addChip(name);
+      const other = h("input", { id: "h-other-area", maxLength: 40, placeholder: "Outra área (ex.: Edícula)" });
+      const addOther = () => {
+        const name = other.value.trim().replace(/\s+/g, " ");
+        if (!name) return;
+        const existing = [...chips.querySelectorAll("input")].find((i) => i.value.toLowerCase() === name.toLowerCase());
+        if (existing) { if (!existing.checked) { existing.checked = true; existing.dispatchEvent(new Event("change")); } }
+        else { d.areas = [...d.areas, name]; addChip(name); chips.lastChild.querySelector("input").checked = true; }
+        other.value = "";
+        other.focus();
+      };
+      other.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addOther(); } });
+      return h("div", { className: "card form-step" }, h("h2", {}, "Pontos de reforma"),
+        h("p", { className: "muted hint" }, "Marque as partes da casa que precisam de reforma. Cada custo da obra pode ser ligado a uma delas."),
+        chips,
+        h("div", { className: "inline-add" }, other, h("button", { type: "button", className: "secondary small", onclick: addOther }, "Adicionar")),
+        h("div", { className: "actions" },
+          h("button", { className: "secondary", onclick: () => go("dados") }, "Voltar"),
+          h("button", { className: "primary", id: "h-next", onclick: () => go("valor") }, "Continuar: valor")));
+    }
+
+    // ---- 3. the value
+    function stepValue() {
+      const d = drafts[current];
+      const price = bind(h("input", { id: "h-price", inputMode: "decimal", placeholder: "0,00", value: d.price }), d, "price");
+      const costs = bind(h("input", { id: "h-costs", inputMode: "decimal", placeholder: "0,00", value: d.costs }), d, "costs");
+      const profit = bind(h("input", { id: "h-profit", inputMode: "decimal", placeholder: "Ex.: 30", value: d.profit }), d, "profit");
+      const notes = h("textarea", { id: "h-notes", maxLength: 2000, rows: 3, value: d.notes });
+      notes.addEventListener("input", () => { d.notes = notes.value; });
+      const last = editing ? "Continuar: pagamento" : "Continuar: pagamento";
+      const validAnd = (action) => {
+        try {
+          money(d.price, "Valor do imóvel");
+          money(d.costs, "Custos da compra", false);
+          if (toPercent(d.profit) === null) throw new Error("Lucro desejado: informe um percentual como 30 ou 12,5");
+          action();
+        } catch (error) { notify(error.message, true); }
+      };
+      const next = h("button", { className: "primary", id: "h-next" }, last);
+      next.onclick = () => {
+        try {
+          money(d.price, "Valor do imóvel");
+          money(d.costs, "Custos da compra", false);
+          if (toPercent(d.profit) === null) throw new Error("Lucro desejado: informe um percentual como 30 ou 12,5");
+          go(drafts.length > 1 ? "casas" : "pagamento");
+        } catch (error) { notify(error.message, true); }
+      };
+      return h("div", { className: "card form-step" }, h("h2", {}, "Valor"),
+        h("div", { className: "two-columns" },
+          h("div", {}, field("h-price", "Valor do imóvel (R$)", price)),
+          h("div", {}, field("h-costs", "Custos da compra (R$)", costs))),
+        h("p", { className: "muted hint" }, "Custos da compra: ITBI, escritura, registro, comissão do corretor, certidões…"),
+        field("h-profit", "Lucro desejado (%)", profit),
+        h("p", { className: "muted hint" }, "Sobre o total investido (compra + reforma): a página da casa mostra por quanto vender hoje."),
+        field("h-notes", "Observações", notes),
+        h("div", { className: "actions" }, h("button", { className: "secondary", onclick: () => go("reforma") }, "Voltar"), next,
+          !editing && h("button", { className: "secondary", id: "h-add-here", onclick: () => validAnd(addAnother) },
+            "Comprei outra casa nesta negociação")));
+    }
+
+    // ---- the houses of this purchase (registering only)
+    function stepHouses() {
+      const total = drafts.reduce((sum, d) => sum + (toCents(d.price) || 0), 0);
+      const rows = drafts.map((d, i) => h("li", {},
+        h("div", {}, h("strong", {}, houseLabel(d, i)), h("div", { className: "muted" }, [d.address,
+          `${formatMoney(toCents(d.price) || 0)}`, d.areas.length && `${d.areas.length} ponto(s) de reforma`].filter(Boolean).join(" · "))),
+        h("div", { className: "actions tight" },
+          h("button", { type: "button", className: "link", onclick: () => { current = i; go("dados"); } }, "Editar"),
+          drafts.length > 1 && h("button", { type: "button", className: "link danger-link",
+            onclick: () => { drafts.splice(i, 1); current = 0; draw(); } }, "Tirar"))));
+      const another = h("button", { className: "secondary", id: "h-add-more", onclick: addAnother }, "+ Outra casa nesta negociação");
+      return h("div", { className: "card form-step" }, h("h2", {}, drafts.length > 1 ? "Casas desta negociação" : "Casas desta negociação"),
+        h("ul", { className: "members", id: "h-houses" }, rows),
+        drafts.length > 1 && h("p", { className: "muted hint" }, `Total dos imóveis: ${formatMoney(total)}. A entrada e as parcelas serão `
+          + "informadas uma vez só, para todas as casas, e divididas pelo valor de cada imóvel."),
+        h("p", { className: "muted hint" }, "Comprou mais de uma casa de uma vez? Adicione cada uma: ela pede todos os dados de novo."),
+        h("div", { className: "actions" }, another,
+          h("button", { className: "primary", id: "h-next", onclick: () => go("pagamento") }, "Continuar: pagamento")));
+    }
+
+    // ---- last: how it is paid
+    function stepPayment() {
+      const deals = drafts.length > 1;
+      const radio = (value, text) => h("label", { className: "choice" },
+        h("input", { type: "radio", name: "h-payment", value, checked: value === deal.type,
+          onchange: () => { deal.type = value; installments.hidden = value !== "installments"; updateSummary(); updateSplit(); } }), text);
+      const down = bind(h("input", { id: "h-down", inputMode: "decimal", placeholder: "0,00", value: deal.down }), deal, "down");
+      const count = bind(h("input", { id: "h-count", type: "number", min: 1, max: 600, inputMode: "numeric", placeholder: "Ex.: 120",
+        value: deal.count }), deal, "count");
+      const amount = bind(h("input", { id: "h-amount", inputMode: "decimal", placeholder: "0,00", value: deal.amount }), deal, "amount");
+      const first = h("input", { id: "h-first", type: "date", value: deal.first });
+      first.addEventListener("input", () => { deal.first = first.value; deal.firstTyped = true; });
+      const summary = h("p", { className: "muted hint", id: "h-summary" });
+      const shares = h("p", { className: "muted hint", id: "h-bundle-note" });
+      const prices = () => drafts.map((d) => toCents(d.price) || 0);
+      const installments = h("div", { className: "installments-fields" },
+        h("div", { className: "two-columns" },
+          h("div", {}, field("h-down", deals ? "Entrada total (R$)" : "Entrada (R$)", down)),
+          !editing && [
+            h("div", {}, field("h-count", "Quantidade de parcelas", count)),
+            h("div", {}, field("h-amount", deals ? "Valor total de cada parcela (R$)" : "Valor de cada parcela (R$)", amount)),
+            h("div", {}, field("h-first", "Data da primeira parcela", first))]),
+        editing ? h("p", { className: "muted hint" }, "As prestações são alteradas na página da casa.") : [summary, shares]);
+      function updateSummary() {          // "Entrada R$ 60.000,00 + 120 × R$ 2.000,00 = R$ 300.000,00"
+        const n = Number(deal.count), each = toCents(deal.amount), entrada = toCents(deal.down || "0");
+        summary.textContent = n > 0 && each !== null && entrada !== null
+          ? `Entrada ${formatMoney(entrada)} + ${n} × ${formatMoney(each)} = ${formatMoney(entrada + n * each)}` : "";
+        const sum = prices().reduce((a, b) => a + b, 0);
+        shares.textContent = !deals || sum === 0 ? "" : "Dividido pelo valor de cada imóvel: "
+          + drafts.map((d, i) => `${houseLabel(d, i)} ${percentText(Math.round((10000 * prices()[i]) / sum) / 100)} %`).join(" · ") + ".";
+      }
+      for (const input of [down, count, amount]) input.addEventListener("input", updateSummary);
+      updateSummary();
+
+      // who bought it: only for one house, registering: the split is set here, in the act of buying
+      const buyersType = (value, text) => h("label", { className: "choice" },
+        h("input", { type: "radio", name: "h-buyers", value, checked: value === deal.buyers,
+          onchange: () => { deal.buyers = value; buyersBox.hidden = value !== "partners"; updateSplit(); } }), text);
+      const ownerShare = bind(h("input", { id: "h-owner-share", inputMode: "decimal", placeholder: "0,00", value: deal.ownerShare }), deal, "ownerShare");
+      const partnerRows = h("div", { id: "h-partners" });
+      const split = h("p", { className: "muted hint", id: "h-split" });
+      const drawPartners = () => partnerRows.replaceChildren(...deal.partners.map((p, i) => {
+        const phone = bind(h("input", { className: "p-phone", type: "tel", inputMode: "numeric", maxLength: 11, placeholder: "Celular",
+          "aria-label": "Celular do sócio (DDD + número)", value: p.phone }), p, "phone");
+        const cents = bind(h("input", { className: "p-cents", inputMode: "decimal", placeholder: "Valor (R$)",
+          "aria-label": "Quanto o sócio pagou (R$)", value: p.cents }), p, "cents");
+        cents.addEventListener("input", updateSplit);
+        return h("div", { className: "partner-row" }, phone, cents, h("button", { type: "button", className: "link danger-link",
+          "aria-label": "Tirar este sócio", onclick: () => { deal.partners.splice(i, 1); drawPartners(); updateSplit(); } }, "✕"));
+      }));
+      function updateSplit() {         // "Pago na compra R$ 318.000,00 · divisão: faltam R$ 18.000,00"
+        const paid = toCents((deal.type === "installments" ? deal.down : drafts[0].price) || "0");
+        const costs = toCents(drafts[0].costs || "0");
+        const total = paid === null || costs === null ? null : paid + costs;
+        const parts = [deal.ownerShare, ...deal.partners.map((p) => p.cents)].map((v) => toCents(v || "0"));
+        if (!total || parts.some((v) => v === null)) { split.textContent = ""; return; }
+        const sum = parts.reduce((a, b) => a + b, 0);
+        split.textContent = `Pago na compra: ${formatMoney(total)} · `
+          + (sum === total ? "a divisão fecha." : `${sum < total ? "faltam" : "passam"} ${formatMoney(Math.abs(total - sum))}.`);
+      }
+      const buyersBox = h("div", { className: "installments-fields buyers-fields", hidden: deal.buyers !== "partners" },
+        field("h-owner-share", "Sua parte na compra (R$)", ownerShare),
+        h("label", {}, "Sócios: celular e quanto cada um pagou na compra"), partnerRows,
+        h("button", { type: "button", className: "secondary small",
+          onclick: () => { deal.partners.push({ phone: "", cents: "" }); drawPartners(); partnerRows.lastChild.querySelector(".p-phone").focus(); } }, "+ Sócio"),
+        split,
+        h("p", { className: "muted hint" }, "Cada sócio recebe um convite no celular. A divisão da compra é definida só aqui, no cadastro."));
+      drawPartners();
+      for (const input of [ownerShare]) input.addEventListener("input", updateSplit);
       updateSplit();
-    }
-    if (!house) for (const input of [ownerShare, price, costs, down]) input.addEventListener("input", updateSplit);
+      installments.hidden = deal.type !== "installments";
 
-    const save = h("button", { className: "primary" }, "Salvar");
-    const dialog = openDialog(house ? `Editar ${house.name}` : "Nova casa",
-      field("h-name", "Nome", name), field("h-address", "Endereço", address),
-      h("div", { className: "two-columns" },
-        h("div", {}, field("h-date", "Data da compra", date)), h("div", {}, field("h-status", "Situação", status)),
-        h("div", {}, field("h-price", "Valor do imóvel (R$)", price)),
-        h("div", {}, field("h-costs", "Custos da compra (R$)", costs))),
-      h("p", { className: "muted hint" }, "Custos da compra: ITBI, escritura, registro, corretagem, certidões…"),
-      h("fieldset", { className: "choices" }, h("legend", {}, "Forma de pagamento"),
-        radio("cash", "À vista"), radio("installments", "Parcelado")),
-      installments,
-      !house && [h("fieldset", { className: "choices" }, h("legend", {}, "Quem comprou"),
-        buyersType("me", "Só eu"), buyersType("partners", "Com sócios")), buyers],
-      areas,
-      field("h-profit", "Lucro desejado (%)", profit),
-      h("p", { className: "muted hint" }, "Sobre o total investido (compra + reforma): a página da casa mostra por quanto vender hoje."),
-      field("h-notes", "Observações", notes),
-      h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
-    toggle();
-    if (!house) { buyers.hidden = true; for (const r of dialog.querySelectorAll("input[name=h-payment]")) r.addEventListener("change", updateSplit); }
-    save.addEventListener("click", () => whileDisabled(save, async () => {
-      try {
-        const target = toPercent(profit.value);
-        if (target === null) throw new Error("Lucro desejado: informe um percentual como 30 ou 12,5");
-        const body = { name: name.value, address: address.value, purchase_date: date.value, status: status.value,
-          notes: notes.value, purchase_price_cents: cents(price, "Valor do imóvel"),
-          purchase_costs_cents: cents(costs, "Custos da compra", false),
-          target_profit_percent: target, payment_type: chosen(),
-          areas: [...chips.querySelectorAll("input:checked")].map((i) => i.value) };
-        if (body.payment_type === "installments") {
-          body.down_payment_cents = cents(down, "Entrada", false);
-          if (!house) {
-            if (!(Number(count.value) >= 1)) throw new Error("Quantidade de parcelas: informe quantas são");
-            body.installments = { count: Number(count.value), amount_cents: cents(amount, "Valor de cada parcela"),
-              first_due_date: first.value };
+      const save = h("button", { className: "primary", id: "h-save" }, editing ? "Salvar" : deals ? "Salvar as casas" : "Salvar casa");
+      save.addEventListener("click", () => whileDisabled(save, async () => {
+        try {
+          const target = (d) => {
+            const value = toPercent(d.profit);
+            if (value === null) throw new Error("Lucro desejado: informe um percentual como 30 ou 12,5");
+            return value;
+          };
+          const data = (d) => ({ name: d.name, address: d.address, status: d.status, notes: d.notes,
+            purchase_price_cents: money(d.price, "Valor do imóvel"), purchase_costs_cents: money(d.costs, "Custos da compra", false),
+            target_profit_percent: target(d), areas: d.areas });
+          const body = { ...data(drafts[0]), purchase_date: deal.date, payment_type: deal.type };
+          if (deal.type === "installments") {
+            body.down_payment_cents = money(deal.down, "Entrada", false);
+            if (!editing) {
+              if (!(Number(deal.count) >= 1)) throw new Error("Quantidade de parcelas: informe quantas são");
+              body.installments = { count: Number(deal.count), amount_cents: money(deal.amount, "Valor de cada parcela"),
+                first_due_date: deal.first };
+            }
           }
-        }
-        if (!house && dialog.querySelector("input[name=h-buyers]:checked").value === "partners") {
-          body.owner_share_cents = cents(ownerShare, "Sua parte na compra", false);
-          body.partners = [...partnerRows.children].map((row) => ({ phone: row.querySelector(".p-phone").value.trim(),
-            cents: cents(row.querySelector(".p-cents"), "Quanto o sócio pagou", false) }));
-          if (body.partners.length === 0) throw new Error("Sócios: adicione ao menos um, ou marque “Só eu”");
-        }
-        const view = house ? await api("PUT", `/houses/${house.id}`, body) : await api("POST", "/houses", body);
-        notify("Casa salva.");
-        dialog.close();
-        onSaved(view);
-      } catch (error) { notify(error.message, true); }
-    }));
-    name.focus();
+          if (!editing && deals) body.also_bought = drafts.slice(1).map(data);
+          if (!editing && !deals && deal.buyers === "partners") {
+            body.owner_share_cents = money(deal.ownerShare, "Sua parte na compra", false);
+            body.partners = deal.partners.map((p) => ({ phone: p.phone.trim(), cents: money(p.cents, "Quanto o sócio pagou", false) }));
+            if (body.partners.length === 0) throw new Error("Sócios: adicione ao menos um, ou marque “Só eu”");
+          }
+          const view = editing ? await api("PUT", `/houses/${house.id}`, body) : await api("POST", "/houses", body);
+          notify(deals ? "Casas salvas." : "Casa salva.");
+          show(view);
+        } catch (error) { notify(error.message, true); }
+      }));
+
+      return h("div", { className: "card form-step" }, h("h2", {}, "Pagamento"),
+        deals && h("p", { className: "muted hint" }, `Compra de ${drafts.length} casas (${formatMoney(prices().reduce((a, b) => a + b, 0))}): `
+          + "a entrada e as parcelas abaixo valem para todas juntas."),
+        h("fieldset", { className: "choices" }, h("legend", {}, "Forma de pagamento"),
+          radio("cash", "À vista"), radio("installments", "Parcelado")),
+        installments,
+        !editing && !deals && [h("fieldset", { className: "choices" }, h("legend", {}, "Quem comprou"),
+          buyersType("me", "Só eu"), buyersType("partners", "Com sócios")), buyersBox],
+        !editing && deals && h("p", { className: "muted hint" }, "Sócios: convide depois, em cada casa."),
+        h("div", { className: "actions" }, h("button", { className: "secondary", onclick: () => go(drafts.length > 1 ? "casas" : "valor") }, "Voltar"), save));
+    }
+
+    function draw() {
+      const body = { dados: stepData, reforma: stepAreas, valor: stepValue, casas: stepHouses, pagamento: stepPayment }[step]();
+      render(container, header(), body);
+      container.querySelector("input:not([type=checkbox]):not([type=radio]), textarea")?.focus();
+    }
+    draw();
   }
 
   function expenseDialog(house, expense) {
@@ -764,16 +906,19 @@ export async function mount(container) {
   }
 
   /** Adds N monthly installments at once: "120 de R$ 2.500,00, a primeira em 10/02/2026". */
-  function planDialog(house) {
+  function planDialog(house, bundle = []) {
+    const grouped = bundle.length > 1;
     const count = h("input", { id: "i-count", type: "number", min: 1, max: 600, value: 1, inputMode: "numeric" });
     const amount = h("input", { id: "i-amount", inputMode: "decimal", placeholder: "0,00" });
     const first = h("input", { id: "i-first", type: "date", value: today() });
     const save = h("button", { className: "primary" }, "Adicionar");
     const dialog = openDialog(`Prestações: ${house.name}`,
       h("div", { className: "two-columns" },
-        h("div", {}, field("i-count", "Quantidade", count)), h("div", {}, field("i-amount", "Valor de cada uma (R$)", amount))),
+        h("div", {}, field("i-count", "Quantidade", count)), h("div", {}, field("i-amount", grouped ? "Valor total de cada uma (R$)" : "Valor de cada uma (R$)", amount))),
       field("i-first", "Vencimento da primeira", first),
-      h("p", { className: "muted hint" }, "Uma por mês, sempre no mesmo dia. Depois dá para editar cada uma (valor, vencimento)."),
+      h("p", { className: "muted hint" }, grouped
+        ? `Compra conjunta: o valor é da parcela inteira e é dividido entre as casas (${bundleText(bundle)}).`
+        : "Uma por mês, sempre no mesmo dia. Depois dá para editar cada uma (valor, vencimento)."),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
@@ -788,22 +933,27 @@ export async function mount(container) {
   }
 
   /** One installment: its due date, its amount and the day it was paid (empty: not paid). */
-  function installmentDialog(house, inst, n) {
+  function installmentDialog(house, inst, n, grouped = false) {
+    grouped = grouped && Boolean(inst.group_id);
     const due = h("input", { id: "i-due", type: "date", value: inst.due_date });
-    const amount = h("input", { id: "i-value", inputMode: "decimal", value: centsToText(inst.amount_cents) });
+    const amount = h("input", { id: "i-value", inputMode: "decimal",
+      value: centsToText(grouped ? inst.total_cents : inst.amount_cents) });
     const paid = h("input", { id: "i-paid", type: "date", value: inst.paid_date });
     const paidBy = paidBySelect("i-paid-by", inst.paid_date ? inst.paid_by || ctx.members[0].id : ctx.me);
     const save = h("button", { className: "primary" }, "Salvar");
     const dialog = openDialog(`Prestação ${n}`,
       h("div", { className: "two-columns" },
-        h("div", {}, field("i-due", "Vencimento", due)), h("div", {}, field("i-value", "Valor (R$)", amount))),
+        h("div", {}, field("i-due", "Vencimento", due)), h("div", {}, field("i-value", grouped ? "Valor total (R$)" : "Valor (R$)", amount))),
+      grouped && h("p", { className: "muted hint" }, "Compra conjunta: o valor, o vencimento e o pagamento valem para todas as casas "
+        + "(o valor é dividido de novo, na mesma proporção)."),
       field("i-paid", "Paga em (vazio se ainda não foi paga)", paid),
       paidBy && field("i-paid-by", "Paga por", paidBy),
       h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
     save.addEventListener("click", () => whileDisabled(save, async () => {
       try {
-        const body = { due_date: due.value, amount_cents: cents(amount, "Valor"), paid_date: paid.value,
-          paid_by: paid.value && paidBy ? paidBy.value : "" };
+        const body = { due_date: due.value, amount_cents: grouped ? inst.amount_cents : cents(amount, "Valor"),
+          paid_date: paid.value, paid_by: paid.value && paidBy ? paidBy.value : "" };
+        if (grouped) body.total_cents = cents(amount, "Valor total");
         const view = await api("PUT", `/houses/${house.id}/installments/${inst.id}`, body);
         notify("Prestação salva.");
         dialog.close();

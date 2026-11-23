@@ -118,14 +118,28 @@ def run():
 
         # a new house: an invalid amount is caught on the screen, then it is saved and its page opens
         page.locator(".empty-state button", has_text="Nova casa").click()
+        expect(page.locator("dialog")).to_have_count(0)                                # a page, not a modal
+        expect(page.locator(".stepper button")).to_have_count(0)                       # a new house: item by item
+        expect(page.locator("h1")).to_have_text("Nova casa")
+        page.click("#h-next")
+        expect(page.locator(".toast.error").last).to_contain_text("Nome")              # one step at a time
         page.fill("#h-name", "Casa Azul")
         page.fill("#h-address", "Rua das Flores, 10")
         page.fill("#h-date", "2026-01-15")
+        page.click("#h-next")
+        page.locator("#h-areas .chip", has_text="Cozinha").click()                      # areas: two suggestions
+        page.locator("#h-areas .chip", has_text="Banheiros").click()
+        page.fill("#h-other-area", "Edícula")                                          # and one typed in
+        page.keyboard.press("Enter")
+        expect(page.locator("#h-areas .chip:has(input:checked)")).to_have_count(3)
+        page.click("#h-next")
         page.fill("#h-price", "abc")
-        page.click("dialog >> text=Salvar")
+        page.click("#h-next")
         expect(page.locator(".toast.error").last).to_contain_text("Valor do imóvel")
         page.fill("#h-price", "300.000,00")
         page.fill("#h-costs", "18.000")
+        page.fill("#h-profit", "30")
+        page.click("#h-next")                                                          # one house: straight to the payment
         expect(page.locator("#h-down")).to_be_hidden()                                 # à vista: no entrada
         page.locator("label.choice", has_text="Parcelado").click()
         page.fill("#h-down", "60.000")
@@ -133,15 +147,9 @@ def run():
         page.fill("#h-amount", "80.000")
         expect(page.locator("#h-first")).to_have_value("2026-02-15")                   # a month after the purchase
         expect(page.locator("#h-summary")).to_contain_text("3 × R$ 80.000,00 = R$ 300.000,00")
-        page.fill("#h-profit", "30")
-        page.locator("#h-areas .chip", has_text="Cozinha").click()                      # areas: two suggestions
-        page.locator("#h-areas .chip", has_text="Banheiros").click()
-        page.fill("#h-other-area", "Edícula")                                          # and one typed in
-        page.keyboard.press("Enter")
-        expect(page.locator("#h-areas .chip:has(input:checked)")).to_have_count(3)
         calls = []
         page.on("request", lambda r: "/houses" in r.url and calls.append(f"{r.method} {r.url.split('/houses', 1)[1]}"))
-        page.click("dialog >> text=Salvar")
+        page.click("#h-save")
         expect(page.locator("h1")).to_contain_text("Casa Azul")
         expect(page.locator("#house-totals")).to_contain_text("318.000,00")
         assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
@@ -246,18 +254,33 @@ def run():
 
         # editing the house keeps its costs; the list shows its totals
         page.click("text=Editar casa")
-        expect(page.locator("#h-price")).to_have_value("300.000,00")
+        expect(page.locator("#h-name")).to_have_value("Casa Azul")
+        expect(page.locator(".stepper li")).to_have_text(["Dados", "Reforma", "Valor", "Pagamento"])
+        page.click(".stepper >> text=Pagamento")                                       # jump, no step by step
         expect(page.locator("#h-down")).to_have_value("60.000,00")
-        expect(page.locator("#h-profit")).to_have_value("30")
-        expect(page.locator("#h-count")).to_have_count(0)                              # the plan: on the house page
+        page.click(".stepper >> text=Valor")
+        expect(page.locator("#h-price")).to_have_value("300.000,00")
+        expect(page.locator(".stepper li")).to_have_text(["Dados", "Reforma", "Valor", "Pagamento"])   # none disappears
+        page.click(".stepper >> text=Dados")
+        page.select_option("#h-status", "ready")
+        page.click("#h-next")
         expect(page.locator("#h-areas .chip:has(input:checked)")).to_have_text(["Cozinha", "Banheiros", "Edícula"])
         page.locator("#h-areas .chip", has_text="Banheiros").click()                    # an area with a cost...
-        page.click("dialog >> text=Salvar")
+        page.click("#h-next")
+        expect(page.locator("#h-price")).to_have_value("300.000,00")
+        expect(page.locator("#h-profit")).to_have_value("30")
+        page.click("#h-next")
+        expect(page.locator("#h-down")).to_have_value("60.000,00")
+        expect(page.locator("#h-count")).to_have_count(0)                              # the plan: on the house page
+        page.click("#h-save")
         expect(page.locator(".toast.error").last).to_contain_text("tem custos lançados")   # ...is not removed
         errors[:] = [e for e in errors if "status of 400" not in e]                  # that 400 was on purpose
+        page.click("text=Voltar")
+        page.click("text=Voltar")
         page.locator("#h-areas .chip", has_text="Banheiros").click()
-        page.select_option("#h-status", "ready")
-        page.click("dialog >> text=Salvar")
+        page.click("#h-next")
+        page.click("#h-next")
+        page.click("#h-save")
         expect(page.locator("h1 .badge")).to_have_text("Pronta")
         page.click("text=‹ Casas")
         expect(page.locator(".list-item")).to_have_count(1)
@@ -343,23 +366,26 @@ def run():
 
         # a house bought with a partner: the split is set when registering it, and the partner is invited
         page.locator(".empty-state button", has_text="Nova casa").click()
-        expect(page.locator("#h-profit")).to_have_value("25")                       # the default profit
         page.fill("#h-name", "Casa Verde")
         page.fill("#h-address", "Rua B, 2")
+        page.click("#h-next")
+        page.click("#h-next")
+        expect(page.locator("#h-profit")).to_have_value("25")                       # the default profit
         page.fill("#h-price", "200.000")
         page.fill("#h-costs", "10.000")
+        page.click("#h-next")
         expect(page.locator("#h-owner-share")).to_be_hidden()                          # "Só eu" by default
         page.locator("label.choice", has_text="Com sócios").click()
         page.fill("#h-owner-share", "100.000")
         page.locator("#h-partners .p-phone").fill("21922222222")
         page.locator("#h-partners .p-cents").fill("100.000")
         expect(page.locator("#h-split")).to_contain_text("faltam R$ 10.000,00")
-        page.click("dialog >> text=Salvar")
+        page.click("#h-save")
         expect(page.locator(".toast.error").last).to_contain_text("precisa fechar")    # the split must add up
         errors[:] = [e for e in errors if "status of 400" not in e]                  # that 400 was on purpose
         page.fill("#h-owner-share", "110.000")
         expect(page.locator("#h-split")).to_contain_text("a divisão fecha")
-        page.click("dialog >> text=Salvar")
+        page.click("#h-save")
         expect(page.locator("h1")).to_contain_text("Casa Verde")
         page.click("#tab-partners")
         expect(page.locator("#partners .members")).to_contain_text("aguardando")
@@ -371,6 +397,38 @@ def run():
         expect(partner.locator("#partners .members li").first).to_contain_text("Ana L. Souza")   # the name chosen
         expect(partner.locator("#by-member tbody tr").nth(1)).to_contain_text("Você")
         expect(partner.locator("#by-member tbody tr").nth(1)).to_contain_text("100.000,00")
+
+        # two houses bought at once: each one asks for all its data, then one payment for both
+        page.click("nav >> text=Casas")
+        page.locator("button", has_text="Nova casa").first.click()
+        page.fill("#h-name", "Casa Dupla A")
+        page.fill("#h-address", "Rua C, 3")
+        page.click("#h-next")
+        page.click("#h-next")
+        page.fill("#h-price", "500.000")
+        page.click("#h-add-here")                                                      # bought another one in the same deal
+        page.fill("#h-name", "Casa Dupla B")
+        page.fill("#h-address", "Rua C, 4")
+        expect(page.locator("#h-date")).to_have_count(0)                               # the deal's date is the first one's
+        page.click("#h-next")
+        page.click("#h-next")
+        page.fill("#h-price", "250.000")
+        page.click("#h-next")
+        expect(page.locator("#h-houses li")).to_have_count(2)
+        page.click("#h-next")
+        page.locator("label.choice", has_text="Parcelado").click()
+        page.fill("#h-down", "75.000")
+        page.fill("#h-count", "2")
+        page.fill("#h-amount", "10.000")
+        expect(page.locator("#h-bundle-note")).to_contain_text("Casa Dupla A 66,67 %")
+        expect(page.locator("#h-bundle-note")).to_contain_text("Casa Dupla B 33,33 %")
+        page.click("#h-save")
+        expect(page.locator("h1")).to_contain_text("Casa Dupla A")
+        page.click("#tab-installments")
+        expect(page.locator("#bundle-note")).to_contain_text("Compra conjunta")
+        expect(page.locator("#installments-table tbody tr")).to_have_count(2)
+        expect(page.locator("#installments-table tbody tr").first).to_contain_text("10.000,00")   # the whole installment
+        expect(page.locator("#installments-table tbody tr").first).to_contain_text("6.666,67")    # this house's part
         browser.close()
     server.shutdown()
     assert not errors, errors

@@ -1,6 +1,7 @@
 """Application rules that more than one use case applies. They only go through the ports."""
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
@@ -64,8 +65,8 @@ def get_installment(repo: Repository, access: Access, id: Any) -> Installment:
     return installment
 
 
-def check_house_limit(repo: Repository, owner: str) -> None:
-    if len(repo.list_houses(owner)) >= MAX_HOUSES:
+def check_house_limit(repo: Repository, owner: str, adding: int = 1) -> None:
+    if len(repo.list_houses(owner)) + adding > MAX_HOUSES:
         raise ValidationError(f"limite de {MAX_HOUSES} casas atingido")
 
 
@@ -104,6 +105,42 @@ def check_bought_in_installments(house: House) -> None:
 def check_installment_limit(repo: Repository, owner: str, house_id: str, adding: int) -> None:
     if len(repo.list_installments(owner, house_id)) + adding > MAX_INSTALLMENTS_PER_HOUSE:
         raise ValidationError(f"limite de {MAX_INSTALLMENTS_PER_HOUSE} prestações nesta casa")
+
+
+def bundle_houses(repo: Repository, owner: str, house: House) -> list[House]:
+    """The houses bought in the same deal as `house` (itself included), in a fixed order; just itself when
+    it was bought alone."""
+    if not house.bundle_id:
+        return [house]
+    deal = [h for h in repo.list_houses(owner) if h.bundle_id == house.bundle_id]
+    return sorted(deal, key=lambda h: h.id) if len(deal) > 1 else [house]
+
+
+def group_siblings(repo: Repository, owner: str, installment: Installment) -> list[Installment]:
+    """The installment and its ones of the other houses of the deal (the same month), in a fixed order."""
+    if not installment.group_id:
+        return [installment]
+    return sorted((i for i in repo.list_installments(owner) if i.group_id == installment.group_id),
+                  key=lambda i: i.house_id)
+
+
+def leave_bundle(repo: Repository, owner: str, house: House) -> None:
+    """A house of a deal was deleted: what is left of the deal keeps its installments, now adding up to
+    the houses that remain (and a house left alone is just a house again)."""
+    if not house.bundle_id:
+        return
+    left = [h for h in repo.list_houses(owner) if h.bundle_id == house.bundle_id and h.id != house.id]
+    alone = len(left) < 2
+    if alone:
+        for h in left:
+            repo.save_house(owner, replace(h, bundle_id=""))
+    months = defaultdict(list)
+    for i in repo.list_installments(owner):
+        if i.group_id and i.house_id in {h.id for h in left}:
+            months[i.group_id].append(i)
+    repo.save_installments(owner, [replace(i, group_id="" if alone else i.group_id,
+                                           total_cents=0 if alone else sum(m.amount_cents for m in items))
+                                   for items in months.values() for i in items])
 
 
 def sorted_houses(houses: Iterable[House]) -> list[House]:
@@ -242,6 +279,19 @@ def delete_photos(deps: Dependencies, access: Access, photo_ids: Iterable[str]) 
             deps.photos.delete(keys)
 
 
+def bundle_view(repo: Repository, access: Access) -> list[dict[str, Any]]:
+    """The houses bought in the same deal as this one, with the part of each installment that is theirs
+    (their price over the deal's); [] when it was bought alone."""
+    deal = bundle_houses(repo, access.owner, access.house)
+    if len(deal) < 2:
+        return []
+    weights = [h.purchase_price_cents for h in deal]
+    if not any(weights):
+        weights = [1] * len(deal)
+    return [{"id": h.id, "name": h.name, "price_cents": h.purchase_price_cents,
+             "percent": round(100 * w / sum(weights), 2)} for h, w in zip(deal, weights)]
+
+
 def house_view(deps: Dependencies, access: Access) -> dict[str, Any]:
     """One house's page: the house, its members, its costs (newest first), its installments (in due
     order), its timeline (oldest first) and the totals. Each photo comes with a link valid for a while.
@@ -253,7 +303,7 @@ def house_view(deps: Dependencies, access: Access) -> dict[str, Any]:
     expenses = sorted_expenses(repo.list_expenses(access.owner, house.id))
     installments = sorted_installments(repo.list_installments(access.owner, house.id))
     timeline = sorted_timeline(repo.list_timeline(access.owner, house.id))
-    return {"house": public_house(house), "members": members(house),
+    return {"house": public_house(house), "members": members(house), "bundle": bundle_view(repo, access),
             "me": access.member_id, "role": "owner" if access.is_owner else "partner",
             "expenses": [{**e.to_dict(), "nf_photo_url": url(e.nf_photo), "material_photo_url": url(e.material_photo)}
                          for e in expenses],
