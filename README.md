@@ -210,13 +210,15 @@ table** (every login and all the data): that stops it before anything is applied
 
 ### Create a login
 
-Actions → *Create user* → choose the environment, type the person's name, the phone (DDD + number,
-digits only, e.g. `11987654321`) and an e-mail. The person logs in with that phone; Cognito e-mails
-the temporary password, which is changed on the first access. The name is how partners see each
-other. There is no open sign-up.
+Actions → *Create user* → choose the environment, type the person's name and the phone (DDD + number,
+digits only, e.g. `11987654321`). There is no e-mail and no verification code: the workflow creates the
+login with a ready, permanent password and shows it in the run's summary (once; keep the repository
+private, since whoever can open the run sees it). Send the person their phone and that password: they
+log in right away. The name is how partners see each other. There is no open sign-up.
 
-For a phone that already has a login, the same workflow only updates the name (to give a name to a
-login created before names existed, or to change it); it shows after that person's next login.
+For a phone that already has a login, the same workflow only updates the name (it shows after that
+person's next login); tick *reset_password* to also give it a new password, shown the same way. Without
+an e-mail on the login, the "forgot my password" code can't be sent: use that option instead.
 
 ## Security and cost
 

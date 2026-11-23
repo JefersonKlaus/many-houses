@@ -1,7 +1,8 @@
 # Creates a login in Cognito, no terminal needed: Actions → Create user → Run workflow.
-# The login is the phone (DDD + number); the e-mail receives the temporary password; the name is how
-# partners see each other. If the phone already has a login, only its name is updated (to give a name
-# to the logins created before names existed, or to change one).
+# The login is the phone (DDD + number); the name is how partners see each other. No e-mail and no
+# verification code: the workflow creates the login with a ready, permanent password (shown once, in
+# the run's summary) to be sent to the person with their phone. If the phone already has a login, only
+# its name is updated (or, with `reset_password`, its password is changed to a new one).
 name: Create user
 
 on:
@@ -20,10 +21,11 @@ on:
         description: "Phone used to log in: DDD + number, digits only (e.g. 11987654321)"
         required: true
         type: string
-      email:
-        description: "E-mail that receives the temporary password"
-        required: true
-        type: string
+      reset_password:
+        description: "If the phone already has a login: also give it a new password"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,7 +37,7 @@ jobs:
     env:
       NAME: ${{ inputs.name }} # through variables: typed text is never pasted into the shell
       PHONE: ${{ inputs.phone }}
-      EMAIL: ${{ inputs.email }}
+      RESET_PASSWORD: ${{ inputs.reset_password }}
       ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -55,10 +57,6 @@ jobs:
             echo "::error::Invalid phone: type DDD + number, digits only (10 or 11 digits)."
             exit 1
           fi
-          if ! printf '%s' "$EMAIL" | grep -Eq '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'; then
-            echo "::error::Invalid e-mail."
-            exit 1
-          fi
           TF_ENVIRONMENT="dev"
           [ "$ENVIRONMENT" = "producao" ] && TF_ENVIRONMENT="prod"
           POOL="$(aws cognito-idp list-user-pools --max-results 60 \
@@ -69,17 +67,36 @@ jobs:
           fi
           # Attributes as JSON (built by jq): a name with commas or quotes is passed as it is.
           NAME_ATTRIBUTE="$(jq -cn --arg v "$NAME" '[{Name: "name", Value: $v}]')"
+          # A password that meets the pool's policy (10+ characters, upper, lower, number).
+          # Never printed to the log (only to the summary): masking it would hide it in the summary too.
+          new_password() {
+            PASSWORD="Ab-$(openssl rand -hex 8)"
+          }
           if aws cognito-idp admin-get-user --user-pool-id "$POOL" --username "+55$PHONE" > /dev/null 2>&1; then
             aws cognito-idp admin-update-user-attributes --user-pool-id "$POOL" --username "+55$PHONE" \
               --user-attributes "$NAME_ATTRIBUTE"
             echo "User $PHONE already existed in **$ENVIRONMENT**: their name was updated (it shows after their next login)." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$RESET_PASSWORD" = "true" ]; then
+              new_password
+              aws cognito-idp admin-set-user-password --user-pool-id "$POOL" --username "+55$PHONE" \
+              --password "$PASSWORD" --permanent
+              echo "New password for $PHONE: \`$PASSWORD\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
-          # The username is the phone in international format (+55...); the temporary password goes by e-mail.
-          ATTRIBUTES="$(jq -cn --arg name "$NAME" --arg phone "+55$PHONE" --arg email "$EMAIL" '[
+          # The username is the phone in international format (+55...). Created without any message (no
+          # e-mail, no code), then given a permanent password: the person logs in right away.
+          new_password
+          ATTRIBUTES="$(jq -cn --arg name "$NAME" --arg phone "+55$PHONE" '[
             {Name: "name", Value: $name},
-            {Name: "phone_number", Value: $phone}, {Name: "phone_number_verified", Value: "true"},
-            {Name: "email", Value: $email}, {Name: "email_verified", Value: "true"}]')"
+            {Name: "phone_number", Value: $phone}, {Name: "phone_number_verified", Value: "true"}]')"
           aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "+55$PHONE" \
-            --user-attributes "$ATTRIBUTES" --desired-delivery-mediums EMAIL > /dev/null
-          echo "User $PHONE created in **$ENVIRONMENT**. The temporary password was sent by e-mail." >> "$GITHUB_STEP_SUMMARY"
+              --user-attributes "$ATTRIBUTES" --message-action SUPPRESS > /dev/null
+          aws cognito-idp admin-set-user-password --user-pool-id "$POOL" --username "+55$PHONE" \
+              --password "$PASSWORD" --permanent
+          {
+            echo "User $PHONE created in **$ENVIRONMENT**. Send them the login and the password (it is not shown again):"
+            echo ""
+            echo "- Login (phone): \`$PHONE\`"
+            echo "- Password: \`$PASSWORD\`"
+          } >> "$GITHUB_STEP_SUMMARY"
