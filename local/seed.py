@@ -14,7 +14,8 @@ from dataclasses import replace
 from datetime import date, timedelta
 
 from houses_core.domain.models import (OWNER_MEMBER_ID, Area, Expense, House, Installment, Invite, Partner,
-                                       PendingInvite, Share, TimelineEntry, add_months, new_id, photo_key)
+                                       PendingInvite, RecurringBill, Share, TimelineEntry, add_months, new_id,
+                                       photo_key)
 from houses_core.ports import Dependencies
 
 R = 100     # R$ 1,00 in cents
@@ -92,6 +93,19 @@ PLANS = {  # house name: entrada, number of monthly installments, each one's amo
 }
 
 
+# The bills each house has every month: (name, when it is due, relative to today) and, for the ones already paid,
+# the payments: (name, days ago, amount). So the houses list has warnings: "in 2 days", "tomorrow", "late" and a paid one.
+BILLS = {
+    "Sobrado Vila Nova": [("Energia", +2), ("Água", -3), ("Internet", +1), ("IPTU", +20)],
+    "Apartamento Centro 302": [("Condomínio", +2), ("Energia", +15)],
+}
+BILL_PAYMENTS = {
+    "Sobrado Vila Nova": [("Energia", 28, 412 * R), ("Água", 29, 138 * R), ("Internet", 0, 119 * R)],
+    "Apartamento Centro 302": [("Condomínio", 28, 650 * R), ("Energia", 20, 187 * R)],
+}
+# The next installment to pay is due in this many days
+DUE_IN = {"Apartamento Centro 302": 2, "Sobrado Vila Nova": 1}
+
 PARTNER_USER, PARTNER_PHONE, PARTNER_NAME = "demo-partner", "+5511988887777", "Marcos Pereira"
 PARTNER_ID = "5a5a5a5a"
 SHARED = "Sobrado Vila Nova"
@@ -114,13 +128,20 @@ def seed(deps: Dependencies, owner: str, today: date, phone: str = "", user_name
             house = replace(house, partners=(Partner(PARTNER_ID, PARTNER_USER, PARTNER_PHONE, PARTNER_NAME),),
                             purchase_shares=(Share(OWNER_MEMBER_ID, house.upfront_cents - half), Share(PARTNER_ID, half)))
             deps.repo.save_link(PARTNER_USER, owner, house.id)
-        deps.repo.save_house(owner, replace(house, owner_name=user_name))
+        bills = tuple(RecurringBill(new_id(), bill, (today + timedelta(days=due)).day) for bill, due in BILLS.get(name, ()))
+        deps.repo.save_house(owner, replace(house, owner_name=user_name, recurring_bills=bills))
         first_due = add_months(bought, 1)
         dues = [add_months(first_due, n) for n in range(count)]
         installments = [Installment(new_id(), house.id, due, amount, due if due <= today.isoformat() else "",
                                     (PARTNER_ID if shared and n % 2 else OWNER_MEMBER_ID) if due <= today.isoformat() else "")
                         for n, due in enumerate(dues)]
+        if name in DUE_IN:
+            open_ = [n for n, i in enumerate(installments) if not i.paid]
+            installments[open_[0]] = replace(installments[open_[0]], due_date=(today + timedelta(days=DUE_IN[name])).isoformat())
         deps.repo.save_installments(owner, installments)
+        for bill, ago, cents in BILL_PAYMENTS.get(name, ()):
+            deps.repo.save_expense(owner, Expense(new_id(), house.id, (today - timedelta(days=ago)).isoformat(),
+                                                  "recurring", bill, cents))
         for ago, category, description, supplier, amount in expenses:
             photos = {"nf_photo": "", "material_photo": ""}
             if shared and description in PHOTOS_OF_COSTS:

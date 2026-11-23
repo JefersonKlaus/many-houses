@@ -7,6 +7,7 @@ default mode, which has no login and opens with the demo data.
 
 The texts used in the selectors ("Entrar", "Salvar", ...) are the app's labels, which are in Portuguese."""
 import json
+from datetime import datetime, timedelta, timezone
 import re
 import struct
 import threading
@@ -154,12 +155,9 @@ def run():
         expect(page.locator("#house-totals")).to_contain_text("318.000,00")
         assert calls == ["POST "], f"saving a house takes one request, not {calls}"   # the answer is the page
 
-        # the page is in tabs: Reforma is open; Compra has the purchase's data
-        expect(page.locator("[role=tab]")).to_have_text(["Reforma", "Compra", "Prestações (0/3)", "Sócios", "Timeline"])
-        expect(page.locator("#tab-renovation")).to_have_attribute("aria-selected", "true")
-        expect(page.locator("#areas")).to_be_visible()
-        expect(page.locator("#purchase")).to_be_hidden()
-        page.click("#tab-purchase")
+        # the page is in tabs: Compra is open (with the installments), then the recurring costs, Reforma...
+        expect(page.locator("[role=tab]")).to_have_text(["Compra (0/3)", "Despesas recorrentesRecorrentes", "Reforma", "Timeline", "Sócios"])
+        expect(page.locator("#tab-purchase")).to_have_attribute("aria-selected", "true")
         expect(page.locator("#purchase")).to_be_visible()
         expect(page.locator("#areas")).to_be_hidden()
         expect(page.locator("#purchase")).to_contain_text("Parcelado")
@@ -169,8 +167,6 @@ def run():
         expect(page.locator("#sale .sale-price")).to_have_text("R$ 413.400,00")       # 318.000 + 30%
 
         # installments: the three registered with the house; the first is paid, the last deleted
-        page.keyboard.press("ArrowRight")                                              # Compra -> Prestações
-        expect(page.locator("#tab-installments")).to_be_focused()
         expect(page.locator("#installments")).to_be_visible()
         expect(page.locator("#installments tbody tr")).to_have_count(3)
         expect(page.locator("#installments tbody")).to_contain_text("15/04/2026")
@@ -185,7 +181,7 @@ def run():
         expect(page.locator("#installments tbody tr")).to_have_count(2)
         expect(page.locator("#installments .totals")).to_contain_text("1 de 2")
         expect(page.locator("#installments")).to_be_visible()                          # the tab stays open after a change
-        expect(page.locator("#tab-installments")).to_have_text("Prestações (1/2)")
+        expect(page.locator("#tab-purchase")).to_have_text("Compra (1/2)")
 
         # two renovation costs, each in an area, then one is changed and the other deleted
         page.click("#tab-renovation")
@@ -231,6 +227,42 @@ def run():
         expect(page.locator("dialog img.photo-big")).to_be_visible()
         assert page.locator("dialog img.photo-big").evaluate("img => img.naturalWidth") == 40   # it loads
         page.click("dialog >> text=Fechar")
+
+        # recurring bills: one is scheduled for two days from now and the houses list warns about it
+        in_two_days = (datetime.now(timezone.utc) - timedelta(hours=3) + timedelta(days=2)).date()
+        page.click("#tab-recurring")
+        expect(page.locator("#recurring-empty")).to_contain_text("Cadastre as contas que vencem todo mês")
+        before = int(page.locator("#notice-count").text_content() or 0)                 # the installments already late
+        page.click("#new-schedule")
+        page.fill("#s-name", "Energia")
+        page.fill("#s-day", str(in_two_days.day))
+        page.click("dialog >> text=Salvar")
+        expect(page.locator("#recurring-bills")).to_contain_text("Energia")
+        expect(page.locator("#recurring-bills")).to_contain_text(f"vence dia {in_two_days.day:02d}")
+        expect(page.locator("#notice-count")).to_have_text(str(before + 1))             # the menu shows how many notices there are
+        page.click("#menu button:has-text('Avisos')")                                   # the warnings are in Avisos
+        expect(page.locator("#due-soon")).to_contain_text("a conta de Energia que vence em 2 dias")
+        page.locator("#due-soon li", has_text="Energia").locator(".link").click()       # and open the house on that tab
+        expect(page.locator("#tab-recurring")).to_have_attribute("aria-selected", "true")
+        page.locator("#recurring-bills li", has_text="Energia").locator("text=Pagar").first.click()
+        expect(page.locator("#r-description")).to_have_value("Energia")                # the name of the bill is fixed
+        page.fill("#r-amount", "250")
+        page.click("dialog >> text=Salvar")
+        expect(page.locator("#recurring-bills li", has_text="Energia").first).to_contain_text("250,00")
+        expect(page.locator("#recurring-bills li", has_text="Energia").first.locator(".badge")).to_have_text("Paga")
+        page.click("#recurring button[aria-label='Mês anterior']")                      # another month: nothing there
+        expect(page.locator("#recurring-empty")).to_contain_text("Nada lançado")        # before it was registered: not charged
+        page.click("#recurring >> text=Hoje")
+        # cancelled (like a Netflix): the last charge is this month; after it the bill is gone, the payment stays
+        this_month = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m")
+        page.locator("#recurring-bills li", has_text="Energia").first.locator(".kebab").click()
+        page.click("text=Encerrar conta")
+        page.fill("#end-month", this_month)
+        page.click("dialog button.primary")
+        expect(page.locator("#recurring-bills li", has_text="Energia")).to_contain_text("encerra em")
+        page.click("#recurring button[aria-label='Próximo mês']")
+        expect(page.locator("#recurring-empty")).to_contain_text("Nada lançado")
+        page.click("#recurring >> text=Hoje")
 
         # the timeline: a moment with two photos; then one of them is taken out
         page.click("#tab-timeline")
@@ -284,8 +316,8 @@ def run():
         expect(page.locator("h1 .badge")).to_have_text("Pronta")
         page.click("text=‹ Casas")
         expect(page.locator(".list-item")).to_have_count(1)
-        expect(page.locator("#portfolio")).to_contain_text("321.000,00")
-        expect(page.locator(".list-item")).to_contain_text("vender por R$ 417.300,00")           # 321.000 + 30%
+        expect(page.locator("#portfolio")).to_contain_text("321.250,00")
+        expect(page.locator(".list-item")).to_contain_text("vender por R$ 417.625,00")           # 321.250 (with the 250 of the bill) + 30%
 
         # a partner: invited by phone, accepts on their own login and pays a cost; the owner sees who put in what
         page.locator(".list-item", has_text="Casa Azul").click()
@@ -300,14 +332,17 @@ def run():
         partner.route("https://cognito-idp.sa-east-1.amazonaws.com/", cognito)
         partner.goto(url_of(server))
         log_in(partner, "21922222222")
+        partner.click("#menu button:has-text('Avisos')")                                # the invites are in Avisos
         expect(partner.locator(".card.invite")).to_contain_text("Ana Lima ((11) 98765-4321) convidou você")
         expect(partner.locator(".card.invite")).to_contain_text("Casa Azul")
         partner.click(".card.invite >> text=Aceitar")
         expect(partner.locator(".card.invite")).to_have_count(0)                        # accepted: in the list, not opened
+        partner.click("#menu button:has-text('Casas')")
         partner.locator(".list-item", has_text="Casa Azul").click()
         expect(partner.locator("h1")).to_contain_text("Casa Azul")
         expect(partner.locator("button.danger:has-text('Excluir')")).to_have_count(1)    # partners are all equal
         expect(partner.locator("text=dono")).to_have_count(0)
+        partner.click("#tab-renovation")
         partner.click("text=Novo custo")
         partner.fill("#e-description", "Azulejos")
         partner.fill("#e-amount", "2.000")
@@ -322,7 +357,7 @@ def run():
         rows = page.locator("#by-member tbody tr")
         expect(rows).to_have_count(2)
         expect(rows.nth(0)).to_contain_text("Você")
-        expect(rows.nth(0)).to_contain_text("161.000,00")      # entrada + costs 78.000, installment 80.000, cost 3.000
+        expect(rows.nth(0)).to_contain_text("161.250,00")      # entrada + costs 78.000, installment 80.000, cost 3.000, bill 250
         expect(rows.nth(1)).to_contain_text("Bruno Reis")                                # by name
         expect(page.locator("#partners .members li").nth(1)).to_contain_text("Bruno Reis")
         expect(page.locator("#partners .members li").nth(1)).to_contain_text("(21) 92222-2222")
@@ -393,9 +428,11 @@ def run():
         expect(page.locator("#partners .members")).to_contain_text("aguardando")
         expect(page.locator("#by-member tbody tr").nth(1)).to_contain_text("100.000,00")   # theirs before accepting
         partner.reload()
+        partner.click("#menu button:has-text('Avisos')")
         partner.click(".card.invite >> text=Aceitar")
-        expect(partner.locator("h1")).to_contain_text("Casas (1)")                         # not opened: it is in the list
         expect(partner.locator(".card.invite")).to_have_count(0)
+        partner.click("#menu button:has-text('Casas')")
+        expect(partner.locator("h1")).to_contain_text("Casas (1)")                         # not opened: it is in the list
         partner.locator(".list-item", has_text="Casa Verde").click()                   # and opens when they want
         expect(partner.locator("h1")).to_contain_text("Casa Verde")
         partner.click("#tab-partners")
@@ -438,8 +475,7 @@ def run():
         expect(page.locator("h1")).to_contain_text("Casa Dupla A")
         page.click("#tab-partners")
         expect(page.locator("#partners .members")).to_contain_text("aguardando")
-        page.click("#tab-installments")
-        page.click("#tab-installments")
+        page.click("#tab-purchase")
         expect(page.locator("#bundle-note")).to_contain_text("Compra conjunta")
         expect(page.locator("#installments-table tbody tr")).to_have_count(2)
         expect(page.locator("#installments-table tbody tr").first).to_contain_text("10.000,00")   # the whole installment
@@ -468,13 +504,14 @@ def run_without_login():
         page.click("#toggle-sold")
         expect(page.locator(".list-item")).to_have_count(3)
         page.locator(".list-item", has_text="Sobrado Vila Nova").click()
+        page.click("#tab-renovation")
         expect(page.locator(".bars").last.locator("li")).to_have_count(4)               # categories
         expect(page.locator("#areas li")).to_have_count(3)                              # Telhado, Hidráulica, Sem área
         expect(page.locator("#areas li").first).to_contain_text("Telhado")
         expect(page.locator("#areas")).to_contain_text("Ainda sem custos: Banheiros, Cozinha")
         expect(page.locator("#expenses tbody tr")).to_have_count(7)
         expect(page.locator("#expenses tbody")).to_contain_text("pago por Marcos Pereira")    # bought with a partner
-        page.click("#tab-installments")
+        page.click("#tab-purchase")
         expect(page.locator("#installments tbody tr")).to_have_count(10)               # a page of a long plan
         expect(page.locator("#installments .pager-page")).to_contain_text("de 12")
         page.click("#tab-partners")
@@ -487,7 +524,7 @@ def run_without_login():
         expect(page.locator("#expenses tbody tr", has_text="Madeiramento")).to_contain_text("Ver NF")
         width = page.evaluate("document.documentElement.scrollWidth")
         assert width <= 390, f"the page scrolls sideways on a phone ({width}px)"
-        for tab in ("renovation", "purchase", "installments", "partners", "timeline"):     # every tab in sight
+        for tab in ("purchase", "recurring", "renovation", "timeline", "partners"):     # every tab in sight
             box = page.locator(f"#tab-{tab}").bounding_box()
             assert box["x"] >= 0 and box["x"] + box["width"] <= 390, f"tab {tab} off the screen on a phone"
         page.click("#tab-renovation")
@@ -514,10 +551,13 @@ def run_without_login():
         expect(page.locator("#expenses tbody tr")).to_have_count(2)
 
         # an invite waiting on top of the list: accepting it adds the house to the list, without opening it
-        page.click("text=‹ Casas")
+        page.click("#menu-toggle")                                                     # phone: the menu is a drawer
+        page.click("#menu button:has-text('Avisos')")
         expect(page.locator(".card.invite")).to_contain_text("Marcos Pereira ((11) 98888-7777) convidou você")
         page.click(".card.invite >> text=Aceitar")
         expect(page.locator(".card.invite")).to_have_count(0)
+        page.click("#menu-toggle")
+        page.click("#menu button:has-text('Casas')")
         page.locator(".list-item", has_text="Casa Vila Rica").click()
         expect(page.locator("h1")).to_contain_text("Casa Vila Rica")
         page.click("#tab-partners")
@@ -525,7 +565,7 @@ def run_without_login():
         expect(page.locator("#partners")).not_to_contain_text("dono")
         page.click("text=‹ Casas")
         expect(page.locator(".card.invite")).to_have_count(0)
-        expect(page.locator(".list-item")).to_have_count(5)                            # sold ones still shown
+        expect(page.locator(".list-item")).to_have_count(4)                            # the sold one is hidden again: the list was reopened from the menu
         browser.close()
     server.shutdown()
     assert not errors, errors

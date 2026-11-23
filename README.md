@@ -6,7 +6,17 @@ marked when paid) and every renovation cost (material, labor, services, project,
 linked to the area of the house it went to (kitchen, roof...), with the totals per house, per
 category, per area (which part costs the most) and for all houses together. Given the profit wanted
 (%), it tells for how much to sell each house today, as it is. A house bought with partners is
-shared with them (invited by phone), and the app shows how much each one put in.
+shared with them (invited by phone), and the app shows how much each one put in. Recurring costs
+(energy, water, internet, gas, condo, IPTU...) are registered bill by bill, each paid by a partner: they are
+an expense with `category: "recurring"` whose description is its name ("Energia"; the screen suggests the names already used), kept apart from the renovation in the totals
+(`recurring_cents`, `by_recurring`) and counted in the total invested. The bills a house has every
+month and the day each is due are set with `PUT /houses/{id}/recurring` (`bills`: [{name, day}]); two days
+before a due date (or after it, until paid) `GET /houses` lists it in the house's `due_soon`, together with its
+unpaid installments, and the houses list shows a warning. A bill counts as paid when a recurring cost with its
+name refers to the month of its due date (`reference`, "YYYY-MM"; by default the month of the payment's date, so a
+late November bill paid in December is still November's). The screen is organized like an accounts-payable list: a
+month at a time, each bill with its state (paid, due soon, late, open) and a Pagar button; the number of notices
+shows beside "Avisos" in the menu.
 
 The app's screens are in Brazilian Portuguese; code and docs are in English.
 

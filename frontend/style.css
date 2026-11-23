@@ -336,3 +336,37 @@ dialog.dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .card.settings { max-width: 560px; }
 .card.settings h2 { margin-top: 0; }
 .card.settings dl { margin: 14px 0 4px; }
+
+/* suggestions under a text field (recurring costs' names): as wide as the field, square list like a regular dropdown */
+.autocomplete { position: relative; }
+.suggestions { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 0; padding: 0; list-style: none;
+  max-height: 11rem; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-top: 0;
+  border-radius: 0; box-shadow: 0 4px 10px rgba(0, 0, 0, .15); }
+.suggestions li { padding: 9px 10px; cursor: pointer; }
+.suggestions li:hover, .suggestions li.active { background: var(--brand-light); }
+.suggestions[hidden] { display: none; }
+
+/* the houses list's warning: bills and installments due in two days or less */
+.due-card { border-color: var(--warn); background: var(--warn-light); color: var(--warn); }
+.due-card h2 { margin-top: 0; color: inherit; }
+.due-card ul { margin: 0; padding-left: 1.2rem; }
+.due-card li.late { font-weight: 600; }
+.due-card button.link { padding: 0; font-weight: 600; color: inherit; text-decoration: underline; }
+
+/* a tab with a long and a short name: the short one on a phone */
+.tab-short { display: none; }
+@media (max-width: 640px) { .tab-long { display: none; } .tab-short { display: inline; } }
+
+/* the number of notices beside "Avisos" in the menu */
+.menu-count { display: inline-block; min-width: 1.4rem; margin-left: 8px; padding: 0 6px; border-radius: 999px; text-align: center;
+  font-size: .75rem; font-weight: 700; line-height: 1.4rem; color: #fff; background: var(--danger); }
+.menu-count[hidden] { display: none; }
+
+/* recurring bills: a month at a time, one line per bill */
+.month-nav { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.month-nav strong { min-width: 10rem; text-align: center; text-transform: capitalize; }
+.badge.soon { color: var(--warn); background: var(--warn-light); }
+.list-item.bill { flex-wrap: wrap; }
+.bill-side { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.bill-side .badge { margin-left: 0; }
+.bill-amount { font-variant-numeric: tabular-nums; }

@@ -1,12 +1,13 @@
 // Casas: every house with what it cost (purchase + renovation), and each house's page with its purchase
 // (price, entrada and the installments being paid), its renovation costs by area and category, the list of
 // costs (with photos of the NF and of the material or service), the timeline of photos from the purchase to
-// the end and, for a house bought with partners, how much each one put in. Invites to be a partner show up
-// on top of the list. Every change answers the house's whole page, which is drawn at once: one request
+// the end and, for a house bought with partners, how much each one put in. Invites to be a partner and bills coming
+// due are in Avisos. Every change answers the house's whole page, which is drawn at once: one request
 // per change, never two.
 import { api, uploadPhoto } from "../api.js";
 import { actionsMenu, centsToText, dateInput, dateValue, formatDate, formatMoney, formatPhone, h, notify, openDialog, percent, percentText,
   render, toCents, toPercent, today, viewPhoto, whileDisabled } from "../util.js";
+import { nav } from "../nav.js";
 import { PAGE_SIZE, pagedList, pagedRows } from "./paged-list.js";
 
 // The API's codes, in the order the screen shows them (backend/core/houses_core/domain/models.py).
@@ -29,14 +30,16 @@ function addMonth(iso) {
 }
 const badge = (status) => h("span", { className: `badge status-${status}` }, STATUS[status] || status);
 
-export async function mount(container) {
+/** `params` {house, tab}: open that house on that tab (what a notice in Avisos links to); without them, the list. */
+export async function mount(container, params = {}) {
   // ------------------------------------------------------------------ every house
   let showSold = false;        // sold houses are hidden from the list (and its totals) unless asked for
 
   async function list() {
-    let all, invites;
-    try { [all, invites] = await Promise.all([api("GET", "/houses"), api("GET", "/invites")]); }
+    let all;
+    try { all = await api("GET", "/houses"); }
     catch (error) { return render(container, h("p", { className: "notice" }, error.message)); }
+    nav.report({ houses: all });
     const sold = all.filter((x) => x.status === "sold").length;
     const houses = showSold ? all : all.filter((x) => x.status !== "sold");
     const sum = (key) => houses.reduce((total, x) => total + x.totals[key], 0);
@@ -52,7 +55,6 @@ export async function mount(container) {
           x.target_profit_percent > 0 && x.status !== "sold" && ` · vender por ${formatMoney(x.totals.sale.suggested_price_cents)}`))),
     h("span", { className: "chevron", "aria-hidden": "true" }, "›"));
     render(container,
-      invites.map(inviteCard),
       h("div", { className: "row" }, h("h1", {}, "Casas", houses.length > 0 && h("span", { className: "count" }, ` (${houses.length})`)),
         h("button", { className: "primary", onclick: newHouse }, "Nova casa")),
       houses.length > 0 && h("div", { className: "totals", id: "portfolio" },
@@ -76,31 +78,6 @@ export async function mount(container) {
     });
   }
 
-  /** "(11) 98888-7777 convidou você para ser sócio da casa X": accept (it joins the list) or decline. */
-  function inviteCard(invite) {
-    const accept = h("button", { className: "primary small" }, "Aceitar");
-    const decline = h("button", { className: "secondary small" }, "Recusar");
-    accept.onclick = () => whileDisabled(accept, async () => {
-      try {
-        await api("POST", `/invites/${invite.id}/accept`, {});
-        notify(`Agora você é sócio de "${invite.house_name}": ela já está na sua lista.`);
-        list();                                  // it shows up in the list; opening it is up to them
-      } catch (error) { notify(error.message, true); list(); }
-    });
-    decline.onclick = () => whileDisabled(decline, async () => {
-      if (!confirm(`Recusar o convite para a casa "${invite.house_name}"?`)) return;
-      try { await api("POST", `/invites/${invite.id}/decline`, {}); notify("Convite recusado."); }
-      catch (error) { notify(error.message, true); }
-      list();
-    });
-    return h("div", { className: "card invite", role: "status" },
-      h("p", {}, h("strong", {}, invite.from_name || formatPhone(invite.from_phone) || "Alguém"),
-        invite.from_name && invite.from_phone && h("span", { className: "muted" }, ` (${formatPhone(invite.from_phone)})`),
-        " convidou você para ser sócio da casa ", h("strong", {}, `“${invite.house_name}”`), "."),
-      h("p", { className: "muted" }, "Aceitando, a casa aparece na sua lista e vocês lançam juntos os pagamentos."),
-      h("div", { className: "actions" }, accept, decline));
-  }
-
   // ------------------------------------------------------------------ one house
   async function detail(id) {
     render(container, h("p", { className: "notice" }, "Carregando…"));
@@ -120,7 +97,11 @@ export async function mount(container) {
     return member ? member.name || formatPhone(member.phone) || "Sócio" : "";
   };
 
+  let lastView = null;      // the house on screen: what a redraw without a request (another month) draws again
+
   function show(view) {
+    lastView = view;
+    nav.report({ house: view });
     const { house, expenses, installments, totals } = view;
     const id = house.id;
     ctx = { members: view.members, me: view.me, role: view.role, shared: view.members.length > 1 };
@@ -144,13 +125,18 @@ export async function mount(container) {
         tile("Total investido", formatMoney(totals.total_cents))),
       saleCard(house, totals),
       tabs(house.id, [
-        ["renovation", "Reforma", () => [areasCard(house, totals), categoriesCard(totals), expensesCard(house, expenses, totals)]],
-        ["purchase", "Compra", () => [purchaseCard(house, totals.payment, view.bundle)]],
-        house.payment_type === "installments" && ["installments",
-          `Prestações (${totals.payment.paid_count}/${totals.payment.installments_count})`,
-          () => [installmentsCard(house, installments, totals.payment, view.bundle)]],
-        ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view), investmentCard(view)]],
+        ["purchase", house.payment_type === "installments"
+          ? `Compra (${totals.payment.paid_count}/${totals.payment.installments_count})` : "Compra",
+        () => [purchaseCard(house, totals.payment, view.bundle),
+          house.payment_type === "installments" && installmentsCard(house, installments, totals.payment, view.bundle)]],
+        // "Despesas recorrentes" where there is room, just "Recorrentes" on a small screen (style.css)
+        ["recurring", [h("span", { className: "tab-long" }, "Despesas recorrentes"), h("span", { className: "tab-short" }, "Recorrentes"),
+          totals.recurring_count ? ` (${totals.recurring_count})` : ""],
+          () => [recurringCard(house, expenses.filter((e) => e.category === "recurring"))]],
+        ["renovation", "Reforma", () => [areasCard(house, totals), categoriesCard(totals),
+          expensesCard(house, expenses.filter((e) => e.category !== "recurring"), totals)]],
         ["timeline", view.timeline.length ? `Timeline (${view.timeline.length})` : "Timeline", () => [timelineCard(house, view.timeline)]],
+        ["partners", ctx.shared ? `Sócios (${view.members.length})` : "Sócios", () => [partnersCard(view), investmentCard(view)]],
       ]));
   }
 
@@ -330,6 +316,204 @@ export async function mount(container) {
         })));
   }
 
+  // ------------------------------------------------------------------ recurring bills
+  // Like an accounts-payable screen: a month at a time, one line per bill with its state (paid, due soon, late,
+  // open) and a Pagar button. The bills (name + due day) are registered once; a payment is a recurring cost of
+  // the month it refers to (its `reference`), which may not be the month it was paid in.
+  const shiftMonth = (ym, n) => {
+    const [y, m] = ym.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
+  };
+  const monthName = (ym) => {
+    const [y, m] = ym.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+  };
+  const monthOf = {};          // house id -> the month on screen ("YYYY-MM"; this month by default)
+  const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const refOf = (payment) => payment.reference || payment.date.slice(0, 7);
+
+  /** The state of a bill of a month: from its due date and today. */
+  function billState(due, paid) {
+    if (paid) return h("span", { className: "badge paid" }, "Paga");
+    const days = Math.round((Date.parse(due) - Date.parse(today())) / 86400000);
+    if (days < 0) return h("span", { className: "badge overdue" }, `Atrasada ${-days} dia${days === -1 ? "" : "s"}`);
+    if (days <= 2) return h("span", { className: "badge soon" }, days === 0 ? "Vence hoje" : days === 1 ? "Vence amanhã" : "Vence em 2 dias");
+    return h("span", { className: "badge open" }, "Em aberto");
+  }
+
+  function recurringCard(house, payments) {
+    const month = monthOf[house.id] || today().slice(0, 7);
+    const go = (n) => { monthOf[house.id] = shiftMonth(month, n); show(lastView); };
+    const [y, m] = month.split("-").map(Number);
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const save = async (list, message) => {
+      try { show(await api("PUT", `/houses/${house.id}/recurring`, { bills: list.map(({ name, day, until }) => ({ name, day, until: until || "" })) })); notify(message); }
+      catch (error) { notify(error.message, true); }
+    };
+    const removePayment = async (p) => {
+      if (!confirm(`Excluir o pagamento "${p.description}" (${formatMoney(p.amount_cents)})?`)) return;
+      try { show(await api("DELETE", `/houses/${house.id}/expenses/${p.id}`)); notify("Pagamento excluído."); }
+      catch (error) { notify(error.message, true); }
+    };
+    const inMonth = payments.filter((p) => refOf(p) === month);
+    const used = new Set();
+    // a bill shows in the months it is due: from the one it was registered in to the one it was cancelled in
+    const active = house.recurring_bills.filter((b) => (!b.since || month >= b.since) && (!b.until || month <= b.until));
+    const lines = [...active].sort((a, b) => a.day - b.day || a.name.localeCompare(b.name)).map((bill) => {
+      const payment = inMonth.find((p) => !used.has(p.id) && sameName(p.description, bill.name));
+      if (payment) used.add(payment.id);
+      return { bill, payment, due: `${month}-${String(Math.min(bill.day, lastDay)).padStart(2, "0")}` };
+    });
+    const loose = inMonth.filter((p) => !used.has(p.id)).map((payment) => ({ bill: null, payment, due: "" }));   // not in the bills
+    const rows = [...lines, ...loose].map(({ bill, payment, due }) => {
+      const name = bill ? bill.name : payment.description;
+      const detail = [due ? `vence dia ${due.slice(8)}` : "avulsa",
+        bill?.until && `encerra em ${monthName(bill.until)}`,
+        payment && `paga em ${formatDate(payment.date)}`, payment && ctx.shared && `por ${memberName(payment.paid_by)}`]
+        .filter(Boolean).join(" · ");
+      const menu = [
+        payment && { text: "Editar pagamento", onclick: () => recurringDialog(house, payment, null, month) },
+        payment && { text: "Excluir pagamento", danger: true, onclick: () => removePayment(payment) },
+        bill && (bill.until
+          ? { text: "Reativar conta", onclick: () => save(house.recurring_bills.map((x) => (x.id === bill.id ? { ...x, until: "" } : x)), "Conta reativada.") }
+          : { text: "Encerrar conta", onclick: () => endDialog(house, bill, month, save) }),
+        bill && { text: "Editar conta", onclick: () => scheduleDialog(house, bill, house.recurring_bills, save) },
+        bill && { text: "Excluir conta", danger: true, onclick: () => {
+          if (confirm(`Excluir a conta "${bill.name}"? Os pagamentos já registrados ficam.`)) save(house.recurring_bills.filter((x) => x.id !== bill.id), "Conta excluída."); } }]
+        .filter(Boolean);
+      return h("li", { className: "list-item bill" },
+        h("div", { className: "list-main" }, h("strong", {}, name), h("div", { className: "muted" }, detail)),
+        h("div", { className: "bill-side" },
+          payment ? h("strong", { className: "bill-amount" }, formatMoney(payment.amount_cents)) : null,
+          billState(due, Boolean(payment)),
+          !payment && h("button", { className: "primary small", onclick: () => recurringDialog(house, null, { name, due }, month) }, "Pagar"),
+          actionsMenu(name, menu)));
+    });
+    const paidCents = inMonth.reduce((sum, p) => sum + p.amount_cents, 0);
+    const paidCount = lines.filter((l) => l.payment).length;
+    const monthBar = h("div", { className: "month-nav" },
+      h("button", { className: "secondary small", "aria-label": "Mês anterior", onclick: () => go(-1) }, "‹"),
+      h("strong", { id: "recurring-month" }, monthName(month)),
+      h("button", { className: "secondary small", "aria-label": "Próximo mês", onclick: () => go(1) }, "›"),
+      month !== today().slice(0, 7) && h("button", { className: "link", onclick: () => { monthOf[house.id] = ""; show(lastView); } }, "Hoje"));
+    return h("div", { className: "card", id: "recurring" },
+      h("div", { className: "row" }, h("h2", {}, "Contas recorrentes"),
+        h("div", { className: "actions tight" },
+          h("button", { className: "secondary small", id: "new-recurring", onclick: () => recurringDialog(house, null, null, month) }, "Lançar pagamento"),
+          h("button", { className: "primary small", id: "new-schedule", onclick: () => scheduleDialog(house, null, house.recurring_bills, save) }, "Cadastrar conta"))),
+      monthBar,
+      rows.length === 0 ? h("p", { className: "muted", id: "recurring-empty" }, house.recurring_bills.length === 0
+        ? "Cadastre as contas que vencem todo mês (energia, água, internet…) com o dia do vencimento. Dois dias antes o sistema avisa em Avisos."
+        : "Nada lançado neste mês.")
+        : [h("div", { className: "totals" },
+          tile("Pagas", `${paidCount} de ${lines.length}`, "contas do mês"), tile("Total pago", formatMoney(paidCents), monthName(month))),
+          h("ul", { className: "list", id: "recurring-bills" }, rows)]);
+  }
+
+  /** Cancels a bill (the Netflix you stopped paying): it stops being charged after the month chosen, its payments
+   *  stay in the history and the warnings stop. Unlike deleting it, which forgets it in every month. */
+  function endDialog(house, bill, month, save) {
+    const last = h("input", { id: "end-month", type: "month", value: month });
+    const button = h("button", { className: "primary" }, "Encerrar");
+    const dialog = openDialog(`Encerrar ${bill.name}`,
+      h("p", { className: "muted" }, "A conta deixa de ser cobrada depois do mês escolhido. Os pagamentos já lançados ficam no histórico."),
+      field("end-month", "Última cobrança em", last),
+      h("div", { className: "actions" }, button, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+    button.addEventListener("click", () => whileDisabled(button, async () => {
+      if (!last.value) return notify("Escolha o último mês da cobrança.", true);
+      await save(house.recurring_bills.map((x) => (x.id === bill.id ? { ...x, until: last.value } : x)), "Conta encerrada.");
+      dialog.close();
+    }));
+  }
+
+  function scheduleDialog(house, bill, list, save) {
+    const name = h("input", { id: "s-name", maxLength: 60, value: bill?.name || "", placeholder: "Ex.: Energia, Água, Internet", autocomplete: "off" });
+    const day = h("input", { id: "s-day", type: "number", min: 1, max: 31, inputMode: "numeric", value: bill?.day || "", placeholder: "1 a 31" });
+    const button = h("button", { className: "primary" }, "Salvar");
+    const dialog = openDialog(bill ? "Editar conta" : `Cadastrar conta: ${house.name}`,
+      field("s-name", "Conta", name), field("s-day", "Vence todo dia", day),
+      h("p", { className: "muted hint" }, "Em meses mais curtos, vale o último dia do mês."),
+      h("div", { className: "actions" }, button, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+    button.addEventListener("click", () => whileDisabled(button, async () => {
+      const entry = { id: bill?.id, name: name.value, day: Number(day.value), until: bill?.until || "" };
+      await save(bill ? list.map((x) => (x.id === bill.id ? entry : x)) : [...list, entry], "Conta salva.");
+      dialog.close();
+    }));
+    name.focus();
+  }
+
+  /** A text input with a list of suggestions right under it, as wide as the field: it shows the ones that contain
+   *  what was typed (all of them when empty); click, or ↑ ↓ and Enter, picks one. Returns the element to put in the form. */
+  function autocomplete(input, options) {
+    const list = h("ul", { className: "suggestions", role: "listbox", hidden: true });
+    let active = -1;
+    const items = () => [...list.children];
+    const mark = (n) => {
+      active = n;
+      items().forEach((li, i) => li.classList.toggle("active", i === n));
+    };
+    const close = () => { list.hidden = true; mark(-1); };
+    const pick = (name) => { input.value = name; close(); };
+    const open = () => {
+      const typed = input.value.trim().toLowerCase();
+      const found = options.filter((o) => o.toLowerCase().includes(typed) && o.toLowerCase() !== typed);
+      list.replaceChildren(...found.map((o) => h("li", { role: "option",
+        onmousedown: (e) => { e.preventDefault(); pick(o); } }, o)));      // mousedown: before the input loses focus
+      list.hidden = found.length === 0;
+      mark(-1);
+    };
+    input.addEventListener("focus", open);
+    input.addEventListener("input", open);
+    input.addEventListener("blur", close);
+    input.addEventListener("keydown", (e) => {
+      const n = items().length;
+      if (list.hidden || n === 0) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        mark((active + (e.key === "ArrowDown" ? 1 : -1) + n) % n);
+      } else if (e.key === "Enter" && active >= 0) { e.preventDefault(); pick(items()[active].textContent); }
+      else if (e.key === "Escape") { e.stopPropagation(); close(); }          // not the dialog
+    });
+    return h("div", { className: "autocomplete" }, input, list);
+  }
+
+  /** Registers (or edits) the payment of a recurring bill. `preset` {name, due}: paying a bill of the list, its name
+   *  is fixed; without it the name is typed (the ones used before are suggested). `month`: the month on screen, the
+   *  one the payment refers to when it is paid on another date (a late bill paid next month). */
+  function recurringDialog(house, payment, preset, month) {
+    const names = [...new Map([...house.recurring_bills.map((b) => b.name),
+      ...lastView.expenses.filter((e) => e.category === "recurring").map((e) => e.description)]
+      .map((n) => [n.toLowerCase(), n])).values()];
+    const date = dateInput({ id: "r-date" }, payment?.date || today());
+    const description = h("input", { id: "r-description", maxLength: 120, value: payment?.description || preset?.name || "",
+      placeholder: "Ex.: Energia, Água, Internet", autocomplete: "off", readOnly: Boolean(preset) });
+    const reference = payment ? refOf(payment) : month;
+    const amount = h("input", { id: "r-amount", inputMode: "decimal", placeholder: "0,00",
+      value: payment ? centsToText(payment.amount_cents) : "" });
+    const paidBy = paidBySelect("r-paid-by", payment ? payment.paid_by || ctx.members[0].id : ctx.me);
+    const save = h("button", { className: "primary" }, "Salvar");
+    const dialog = openDialog(payment ? "Editar pagamento" : preset ? `Pagar ${preset.name}` : `Lançar pagamento: ${house.name}`,
+      preset?.due && h("p", { className: "muted" }, `Vencimento: ${formatDate(preset.due)}`),
+      field("r-description", "Conta", preset ? description : autocomplete(description, names)),
+      h("div", { className: "two-columns" },
+        h("div", {}, field("r-date", "Pago em", date)), h("div", {}, field("r-amount", "Valor (R$)", amount))),
+      paidBy && field("r-paid-by", "Pago por", paidBy),
+      h("p", { className: "muted hint" }, `Conta de ${monthName(reference)}.`),
+      h("div", { className: "actions" }, save, h("button", { className: "secondary", onclick: () => dialog.close() }, "Fechar")));
+    save.addEventListener("click", () => whileDisabled(save, async () => {
+      try {
+        const body = { category: "recurring", date: dateValue(date, "Pago em"), reference,
+          description: description.value, amount_cents: cents(amount, "Valor"), paid_by: paidBy ? paidBy.value : "" };
+        const view = payment ? await api("PUT", `/houses/${house.id}/expenses/${payment.id}`, body)
+          : await api("POST", `/houses/${house.id}/expenses`, body);
+        notify("Pagamento salvo.");
+        dialog.close();
+        show(view);
+      } catch (error) { notify(error.message, true); }
+    }));
+    (preset ? amount : description).focus();
+  }
+
   const areaName = (house, id) => house.areas.find((a) => a.id === id)?.name || "";
 
   function expensesCard(house, expenses, totals) {
@@ -425,19 +609,20 @@ export async function mount(container) {
     const invested = totals.by_member.reduce((sum, r) => sum + r.total_cents, 0);
     return h("div", { className: "card", id: "investment" }, h("h2", {}, "Investimento por sócio"),
       h("div", { className: "table-scroll" }, h("table", { className: "money", id: "by-member" },
-        h("thead", {}, h("tr", {}, ["Sócio", "Compra", "Prestações", "Reforma", "Total", ""].map((c, i) =>
-          h("th", { className: i > 0 && i < 5 ? "num" : null }, c)))),
+        h("thead", {}, h("tr", {}, ["Sócio", "Compra", "Prestações", "Reforma", "Recorrentes", "Total", ""].map((c, i) =>
+          h("th", { className: i > 0 && i < 6 ? "num" : null }, c)))),
         // data-label: on a phone each partner is a block, the label next to each amount (style.css)
         h("tbody", {}, totals.by_member.map((r) => h("tr", {},
           h("td", {}, memberName(r.member_id)),
           h("td", { className: "num", "data-label": "Compra" }, formatMoney(r.purchase_cents)),
           h("td", { className: "num", "data-label": "Prestações" }, formatMoney(r.installments_cents)),
           h("td", { className: "num", "data-label": "Reforma" }, formatMoney(r.renovation_cents)),
+          h("td", { className: "num", "data-label": "Recorrentes" }, formatMoney(r.recurring_cents)),
           h("td", { className: "num" }, h("strong", {}, formatMoney(r.total_cents))),
           h("td", { className: "num muted" }, percent(r.total_cents, invested))))),
         h("tfoot", {}, h("tr", {}, h("td", {}, "Total pago"),
           ...[["purchase_cents", "Compra"], ["installments_cents", "Prestações"], ["renovation_cents", "Reforma"],
-            ["total_cents", null]].map(([k, label]) =>
+            ["recurring_cents", "Recorrentes"], ["total_cents", null]].map(([k, label]) =>
             h("td", { className: "num", "data-label": label }, formatMoney(totals.by_member.reduce((sum, r) => sum + r[k], 0)))),
           h("td", {}))))),
       h("p", { className: "muted hint" }, "Compra: o que cada um pagou no ato da compra, definido no cadastro da casa. "
@@ -968,5 +1153,8 @@ export async function mount(container) {
     amount.focus();
   }
 
-  list();
+  if (params.house) {
+    if (params.tab) openTab[params.house] = params.tab;
+    detail(params.house);
+  } else list();
 }

@@ -141,3 +141,17 @@ def test_expense_area_id():
     assert Expense.from_input(expense_input(area_id="1234abcd"), "abcd1234").area_id == "1234abcd"
     with pytest.raises(ValidationError, match="área"):
         Expense.from_input(expense_input(area_id="cozinha"), "abcd1234")
+
+
+def test_recurring_costs_are_apart_from_the_renovation():
+    house = House.from_input(house_input())
+    recurring = lambda description, cents: Expense.from_input(  # noqa: E731
+        expense_input(category="recurring", description=description, amount_cents=cents), house.id)
+    expenses = [Expense.from_input(expense_input(amount_cents=100), house.id),
+                recurring("Energia", 30), recurring("energia", 10), recurring("Água", 50)]
+    result = totals(house, expenses)
+    assert result["renovation_cents"] == 100 and result["recurring_cents"] == 90 and result["recurring_count"] == 3
+    assert result["by_recurring"] == [{"name": "Água", "cents": 50, "count": 1},
+                                      {"name": "Energia", "cents": 40, "count": 2}]   # the name groups, any case
+    assert result["total_cents"] == 31_800_190 and result["expense_count"] == 1
+    assert Expense.from_dict(expenses[1].to_dict()) == expenses[1]

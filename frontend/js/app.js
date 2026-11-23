@@ -1,11 +1,14 @@
 import { CONFIG } from "./config.js";
 import { isSignedIn, setNewPassword, signIn, signOut } from "./auth.js";
 import { h, notify, render, revealable, whileDisabled } from "./util.js";
+import { api } from "./api.js";
+import { nav } from "./nav.js";
+import { mount as avisos } from "./screens/avisos.js";
 import { mount as houses } from "./screens/houses.js";
 import { mountDefaults, mountProfile } from "./screens/settings.js";
 
 const content = document.getElementById("content");
-const SCREENS = [["Casas", houses]];             // [name in the menu, mount]; the settings are at its bottom
+const SCREENS = [["Casas", houses], ["Avisos", avisos]];             // [name in the menu, mount]; the settings are at its bottom
 
 function loginScreen(challenge = null) {
   // DDD + number, digits only (no mask): 11987654321
@@ -60,15 +63,33 @@ function start() {
   // the pages: the ones in the menu, then the Configurações group at its bottom (Perfil, Predefinições)
   const groupButtons = [document.getElementById("open-profile"), document.getElementById("open-defaults")];
   const pages = [...SCREENS, ["Perfil", mountProfile], ["Predefinições", mountDefaults]];
-  const buttons = [...SCREENS.map(([name], i) => h("button", { onclick: () => open(i) }, name)), ...groupButtons];
+  // the number of notices beside "Avisos": the invites waiting plus what is due, kept by what the screens report
+  const noticeCount = h("span", { className: "menu-count", id: "notice-count", hidden: true, "aria-label": "avisos" });
+  const buttons = [...SCREENS.map(([name], i) => h("button", { onclick: () => open(i) }, name,
+    name === "Avisos" && noticeCount)), ...groupButtons];
+  const notices = { houses: new Map(), invites: 0 };
+  const showCount = () => {
+    const n = notices.invites + [...notices.houses.values()].reduce((a, b) => a + b, 0);
+    noticeCount.textContent = n > 99 ? "99+" : String(n);
+    noticeCount.hidden = n === 0;
+  };
+  nav.report = ({ houses, invites, house }) => {
+    if (houses) notices.houses = new Map(houses.map((x) => [x.id, (x.due_soon || []).length]));
+    if (invites) notices.invites = invites.length;
+    if (house) notices.houses.set(house.house.id, (house.due_soon || []).length);
+    showCount();
+  };
+  Promise.all([api("GET", "/houses"), api("GET", "/invites")])        // once on entering: the number is there from the start
+    .then(([houses, invites]) => nav.report({ houses, invites })).catch(() => {});
   groupButtons.forEach((button, i) => { button.onclick = () => open(SCREENS.length + i); });
-  const open = (index) => {
+  const open = (index, params = {}) => {
     buttons.forEach((b, i) => (i === index ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
     setDrawer(false);
     const area = h("div");
     render(content, area);
-    pages[index][1](area);
+    pages[index][1](area, params);
   };
+  nav.go = (name, params) => open(pages.findIndex(([n]) => n === name), params);
   render(document.getElementById("menu"), buttons.slice(0, SCREENS.length));
 
   const logout = document.getElementById("logout");
