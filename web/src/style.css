@@ -110,6 +110,7 @@ button.link.back { padding-left: 0; color: var(--brand); margin-bottom: 4px; }
   stroke-linecap: round; stroke-linejoin: round; }
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 32px 20px; text-align: center; }
 .empty-state h2 { margin: 0; }
+.empty-art { max-width: 100%; height: auto; margin-bottom: 8px; }
 .empty-state button { margin-top: 12px; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 /* "Forma de pagamento": two choices side by side, like a switch */

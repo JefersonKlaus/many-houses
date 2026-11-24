@@ -260,3 +260,33 @@ export function PasswordInput(props: { id: string; value: string; onChange: (v: 
     </div>
   );
 }
+
+/** What a screen shows when there is nothing to list: a drawing, a title, a line of help and, optionally, the action. */
+export function EmptyState({ art, title, children, id }: { art: "house" | "bell"; title: string; children?: ReactNode; id?: string }) {
+  return (
+    <div className="card empty-state" id={id}>
+      <svg className="empty-art" viewBox="0 0 160 120" width="160" height="120" aria-hidden="true" focusable="false">
+        <ellipse cx="80" cy="108" rx="58" ry="7" fill="var(--brand-light)" />
+        {art === "house" ? (
+          <>
+            <path d="M28 58 80 14l52 44" fill="none" stroke="var(--brand)" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M40 52v52h80V52" fill="var(--brand-light)" stroke="var(--brand)" strokeWidth="6" strokeLinejoin="round" />
+            <rect x="68" y="72" width="24" height="32" rx="3" fill="var(--accent)" />
+            <rect x="48" y="62" width="14" height="14" rx="2" fill="var(--surface)" stroke="var(--brand)" strokeWidth="3" />
+            <rect x="98" y="62" width="14" height="14" rx="2" fill="var(--surface)" stroke="var(--brand)" strokeWidth="3" />
+          </>
+        ) : (
+          <>
+            <path d="M80 20a28 28 0 0 0-28 28v22l-10 14h76l-10-14V48a28 28 0 0 0-28-28Z"
+              fill="var(--brand-light)" stroke="var(--brand)" strokeWidth="6" strokeLinejoin="round" />
+            <path d="M70 92a10 10 0 0 0 20 0" fill="none" stroke="var(--brand)" strokeWidth="6" strokeLinecap="round" />
+            <circle cx="80" cy="14" r="5" fill="var(--accent)" />
+            <path d="m66 56 10 10 18-20" fill="none" stroke="var(--accent)" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
+      </svg>
+      <h2>{title}</h2>
+      {children}
+    </div>
+  );
+}

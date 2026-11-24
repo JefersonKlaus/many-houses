@@ -7,7 +7,7 @@ import { errorText, formatMoney } from "../../format";
 import { useNotices } from "../../notices";
 import { notify } from "../../toast";
 import type { House, HouseSummary, HouseView, Settings } from "../../types";
-import { PagedList, PhotoDialog, Tile, useBusy, useDialog } from "../../ui";
+import { EmptyState, PagedList, PhotoDialog, Tile, useBusy, useDialog } from "../../ui";
 import { Badge, HouseProvider, memberNamer } from "./context";
 import { HouseForm } from "./HouseForm";
 import { HousePage, type PageMemory } from "./HousePage";
@@ -98,9 +98,9 @@ function HouseList({ onOpen, onNew }: { onOpen: (id: string) => void; onNew: (de
         </div>
       )}
       {all.length === 0
-        ? <div className="card empty-state"><h2>Nenhuma casa ainda</h2>
-          <p className="muted">Cadastre a primeira casa comprada e acompanhe os custos da reforma.</p>{newButton}</div>
-        : houses.length === 0 ? <p className="notice">Nenhuma casa à venda ou em reforma.</p>
+        ? <EmptyState art="house" title="Nenhuma casa ainda">
+          <p className="muted">Cadastre a primeira casa comprada e acompanhe os custos da reforma.</p>{newButton}</EmptyState>
+        : houses.length === 0 ? <EmptyState art="house" title="Nenhuma casa à venda ou em reforma"><p className="muted">As casas vendidas estão ocultas; use “Mostrar vendidas” abaixo.</p></EmptyState>
           : <PagedList items={houses} label="casas (nome ou endereço)" searchText={(x) => `${x.name} ${x.address}`} row={(x) => (
             <li key={x.id} className="list-item clickable" tabIndex={0} role="button" onClick={() => onOpen(x.id)}
               onKeyDown={(e) => { if (e.key === "Enter") onOpen(x.id); }}>

@@ -4,7 +4,8 @@ React + TypeScript and is built with Vite). Python tools go inside .venv/, Node 
 
     python dev.py setup     create .venv with the test tools, download Chromium and install the site's packages
     python dev.py serve     build the site, then the site + in-memory API at http://127.0.0.1:8765, no login,
-                            with demo data (--port, --empty). For hot reload while editing the site, keep this
+                            as an active user with demo data, or as a new
+                            user with --empty / --new (also --port). For hot reload while editing the site, keep this
                             running and use `npm run dev` in web/.
     python dev.py test      backend tests, the site's type-check and build
     python dev.py e2e       build the site, then the browser test (a real Chromium)
@@ -105,7 +106,8 @@ def main() -> int:
                               help="also install Chromium's system libraries (Linux; uses sudo/apt)")
     serve_parser = commands.add_parser("serve", help="build the site, then the site + in-memory API, no login")
     serve_parser.add_argument("--port", type=int, default=8765)
-    serve_parser.add_argument("--empty", action="store_true", help="start with no data (default: demo data)")
+    serve_parser.add_argument("--empty", "--new", dest="empty", action="store_true",
+                              help="start as a NEW user, with no data (default: an active user, with demo data)")
     commands.add_parser("test", help="backend tests, site type-check and build")
     commands.add_parser("e2e", help="build the site, then the browser test")
     commands.add_parser("all", help="test + e2e")

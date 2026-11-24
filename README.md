@@ -27,7 +27,7 @@ Needs Python 3.12+ and Node 22 (to build the site).
 ```bash
 python dev.py setup             # once: creates .venv/ and downloads Chromium
 python dev.py serve             # http://127.0.0.1:8765
-python dev.py serve --empty     # start with nothing registered
+python dev.py serve --empty     # start as a new user, with nothing registered (also --new)
 ```
 
 No AWS, no login, no configuration. It opens with demo data ([local/seed.py](local/seed.py)): four

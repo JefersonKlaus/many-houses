@@ -8,7 +8,7 @@ import { errorText, formatDate, formatMoney, formatPhone } from "../format";
 import { useNotices } from "../notices";
 import { notify } from "../toast";
 import type { DueItem, HouseSummary, PendingInvite } from "../types";
-import { useBusy } from "../ui";
+import { EmptyState, useBusy } from "../ui";
 
 const when = (days: number) => days < 0 ? `venceu há ${-days} dia${days === -1 ? "" : "s"}` : days === 0 ? "vence hoje"
   : days === 1 ? "vence amanhã" : `vence em ${days} dias`;
@@ -48,7 +48,7 @@ export function Avisos({ go }: { go: Go }) {
           </ul>
         </div>
       )}
-      {data.invites.length === 0 && data.due.length === 0 && <p className="notice" id="no-notices">Nenhum aviso por enquanto.</p>}
+      {data.invites.length === 0 && data.due.length === 0 && <EmptyState art="bell" id="no-notices" title="Nenhum aviso por enquanto"><p className="muted">Convites de sócios e contas a vencer aparecem aqui.</p></EmptyState>}
     </>
   );
 }
