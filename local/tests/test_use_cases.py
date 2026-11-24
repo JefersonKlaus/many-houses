@@ -393,8 +393,8 @@ def test_paying_an_installment_of_a_deal_by_a_partner_is_the_same_partner_in_eac
     other = next(h for h in houses if h.id != view["house"]["id"])
     paid_by = {i.house_id: i.paid_by for i in deps.repo.list_installments(OWNER) if i.paid_date}
     partner_of = lambda house: next(p.id for p in deps.repo.get_house(OWNER, house.id).partners)    # noqa: E731
-    assert paid_by == {view["house"]["id"]: partner_of(houses[0] if houses[0].id == view["house"]["id"] else other),
-                       other.id: partner_of(other)}
+    opened = next(h for h in houses if h.id == view["house"]["id"])
+    assert paid_by == {opened.id: partner_of(opened), other.id: partner_of(other)}      # each house: its own partner entry
 
 
 def test_recurring_bills_warn_two_days_before_they_are_due(deps, monkeypatch):
