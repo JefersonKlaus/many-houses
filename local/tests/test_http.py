@@ -181,13 +181,15 @@ def _generic(route):
 
 
 def test_every_call_of_the_frontend_has_a_lambda_and_every_lambda_is_used():
-    """The contract between the two sides: each api("METHOD", "/path") in frontend/js matches a route
+    """The contract between the two sides: each api("METHOD", "/path") in web/src matches a route
     in some lambda.json (what Terraform deploys), and no Lambda is left that nobody calls."""
     routes = {_generic(json.loads((ROOT / "backend" / "lambdas" / name / "lambda.json").read_text())["route"])
               for _, _, name, _ in ROUTES}
     calls = set()
-    for file in (ROOT / "frontend" / "js").rglob("*.js"):
-        for method, path in re.findall(r'api\("([A-Z]+)", [`"]([^`"]+)[`"]', file.read_text(encoding="utf-8")):
-            calls.add(f"{method} {re.sub(r'\$\{[^}]+\}', '{}', path)}")
+    call = re.compile(r'api(?:<[^>(]*>)?\(\s*"([A-Z]+)",\s*[`"]([^`"]+)[`"]')      # api("GET", ...) or api<T>("GET", ...)
+    placeholder = re.compile(r"\$\{[^}]+\}")
+    for file in [*(ROOT / "web" / "src").rglob("*.ts"), *(ROOT / "web" / "src").rglob("*.tsx")]:
+        for method, path in call.findall(file.read_text(encoding="utf-8")):
+            calls.add(f"{method} {placeholder.sub('{}', path)}")
     assert calls - routes == set(), "the frontend calls routes no Lambda answers"
     assert routes - calls == set(), "Lambdas nobody calls"

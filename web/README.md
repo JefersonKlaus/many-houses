@@ -1,16 +1,14 @@
-# web/: the new frontend (React + TypeScript), being migrated from frontend/
+# web/: the site (React + TypeScript)
 
-The backend does not change: same API, same Python code. Until every screen is moved over, the app in use
-is still `frontend/` (deploy and `python dev.py serve` keep serving it).
+The backend is the Python API (backend/); this is only the browser side, built with Vite into `web/dist/`,
+which the deploy publishes to S3 and `local/server.py` serves.
 
-- `npm install` once, then with the local API running (`python dev.py serve`, port 8765):
-  - `npm run dev`: the new app with hot reload (it proxies `/api` and `/js/config.js` to the local server)
+- `npm install` once (or `python dev.py setup`), then with the local API running (`python dev.py serve`, port 8765):
+  - `npm run dev`: the site with hot reload (it proxies `/api` and `/js/config.js` to the local server)
   - `npm run build`: type-check + production build in `web/dist/`
 - `/js/config.js` is not bundled: it is loaded at runtime, generated at deploy time or by the local server,
   so one build works locally and in AWS.
-
-Migration steps: 1. shell (login, menu, notices count) - done; 2. API types; 3. screens (Avisos, Perfil,
-Predefinições, Casas, the house page); 4. switch deploy/e2e to `web/dist/` and remove `frontend/`.
+- The CSP allows no inline scripts or styles: React's `style={...}` is fine (set through the CSSOM).
 
 ## Brand
 

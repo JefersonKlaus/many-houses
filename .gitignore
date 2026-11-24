@@ -230,8 +230,9 @@ __marimo__/
 infra/build/
 terraform.tfvars
 *.auto.tfvars
-# frontend/js/config.js is generated at deploy time; the one in the repository is just an empty template
+# js/config.js is generated at deploy time (into web/dist/) or served by the local server
 
 # the new frontend (web/): dependencies and build output
 web/node_modules/
 web/dist/
+web/tsconfig.tsbuildinfo

@@ -22,7 +22,7 @@ The app's screens are in Brazilian Portuguese; code and docs are in English.
 
 ## Run it locally
 
-Needs Python 3.12+ (and Node 22 for the JS syntax check).
+Needs Python 3.12+ and Node 22 (to build the site).
 
 ```bash
 python dev.py setup             # once: creates .venv/ and downloads Chromium
@@ -37,7 +37,7 @@ always dated around today. Data lives in memory and is gone when you stop the se
 ## Run the tests
 
 ```bash
-python dev.py test    # backend tests + JS syntax (seconds)
+python dev.py test    # backend tests + the site's type-check and build
 python dev.py e2e     # browser test in a real Chromium
 python dev.py all     # both: what CI runs
 ```
@@ -50,7 +50,7 @@ python dev.py all     # both: what CI runs
 ## Architecture
 
 ```
-Browser ──► CloudFront ──► S3                 the site (HTML/CSS/JS, no build)
+Browser ──► CloudFront ──► S3                 the site (React + TypeScript, built with Vite)
    │
    ├──► API Gateway ──► one Lambda per action ──► DynamoDB
    │    (checks the Cognito login)          └──► signs photo uploads and links
@@ -58,7 +58,7 @@ Browser ──► CloudFront ──► S3                 the site (HTML/CSS/JS,
 ```
 
 ```
-frontend/   the site                         deployed to S3
+web/        the site (React + TypeScript)    built, then deployed to S3
 backend/    the Lambdas                      deployed to AWS Lambda
 infra/      Terraform for everything in AWS
 local/      local server, in-memory database, tests   never deployed
@@ -67,19 +67,24 @@ dev.py      the commands above
 
 ### Frontend
 
-Plain JavaScript modules, no framework, no build step.
+React 19 + TypeScript (strict), built with Vite into `web/dist/`. No router or state library: a few pages as
+plain state, and each change to a house answers the whole house's page, drawn at once (one request per change).
 
 ```
-frontend/
-  index.html, style.css
-  js/app.js            menu and login screen
-  js/api.js            every call to the backend
-  js/auth.js           Cognito login (tokens)
-  js/config.js         where the API is (written by the deploy; empty in the repo)
-  js/screens/houses.js the houses: list, one house's page, the forms
-  js/screens/settings.js the Configurações group (bottom of the menu): Perfil, Predefinições
-  js/screens/password.js Alterar senha (Perfil > Segurança)
+web/
+  index.html, public/favicon.svg
+  src/main.tsx               loads js/config.js, then the app
+  src/App.tsx                login screen, layout (menu, notices count) and pages
+  src/api.ts, auth.ts        every call to the backend; the Cognito login (tokens)
+  src/config.ts              js/config.js: where the API is (written by the deploy, loaded at runtime, not bundled)
+  src/types.ts, format.ts    what the API answers; money, dates and other values on screen
+  src/ui.tsx, Logo.tsx       dialogs, the ⋮ menu, fields, pages of a list...; the brand
+  src/screens/Avisos.tsx     invites and what is due soon
+  src/screens/Settings.tsx   the Configurações group: Perfil (and Alterar senha), Predefinições
+  src/screens/houses/        the list, one house's page (tabs), the house form, the dialogs
 ```
+
+`cd web && npm run dev` serves the site with hot reload, sending `/api` to the local server (`python dev.py serve`).
 
 The frontend doesn't know whether the backend is AWS or local: it calls `CONFIG.apiUrl`.
 The deploy writes a `config.js` with the real API; the local server returns its own `config.js`
@@ -184,13 +189,13 @@ Rules worth knowing:
 
 ### Local
 
-`local/server.py` serves `frontend/` and plays API Gateway: `local/api_gateway.py` reads the same
+`local/server.py` serves the built site (`web/dist/`) and plays API Gateway: `local/api_gateway.py` reads the same
 `lambda.json` files and calls the same Lambdas, with `local/memory_repository.py` instead of
 DynamoDB. It only listens on 127.0.0.1.
 
 ## Deploy
 
-Everything goes through GitHub Actions, with no terminal: a push runs every test (Python, JS and the
+Everything goes through GitHub Actions, with no terminal: a push runs every test (Python, the site's type-check and build, and the
 browser test), then Terraform creates or updates all of AWS (Lambdas, API, Cognito, table, site),
 then the site is published. Two environments, each in its own AWS account:
 

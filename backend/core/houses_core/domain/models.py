@@ -18,7 +18,7 @@ _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 MAX_AMOUNT_CENTS = 10_000_000_000           # R$ 100 milhões: no single amount is bigger than this
 MAX_INSTALLMENTS_AT_ONCE = 600              # 50 years of monthly installments
 
-# The screens show these in Portuguese (frontend/js/screens/houses.js).
+# The screens show these in Portuguese (web/src/screens/houses/context.tsx).
 HOUSE_STATUSES = ("renovating", "ready", "sold")                         # em reforma, pronta, vendida
 PAYMENT_TYPES = ("cash", "installments")                                  # à vista, parcelado
 MAX_PROFIT_PERCENT = 1000

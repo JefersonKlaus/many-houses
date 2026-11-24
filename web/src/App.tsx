@@ -7,8 +7,11 @@ import { isSignedIn, setNewPassword, signIn, signOut, type Challenge } from "./a
 import { CONFIG } from "./config";
 import { Logo } from "./Logo";
 import { NoticesProvider, useNotices } from "./notices";
-import { Placeholder } from "./screens/Placeholder";
+import { Avisos } from "./screens/Avisos";
+import { Houses } from "./screens/houses/Houses";
+import { Defaults, Profile } from "./screens/Settings";
 import { notify, Toasts } from "./toast";
+import { PasswordInput } from "./ui";
 import type { HouseSummary, PendingInvite } from "./types";
 
 export type PageName = "Casas" | "Avisos" | "Perfil" | "Predefinições";
@@ -17,6 +20,7 @@ export type Go = (name: PageName, params?: Page["params"]) => void;
 
 const MENU: PageName[] = ["Casas", "Avisos"];
 const SETTINGS: PageName[] = ["Perfil", "Predefinições"];
+const PAGE_IDS: Partial<Record<PageName, string>> = { Perfil: "open-profile", "Predefinições": "open-defaults" };
 
 export function App() {
   const [signedIn, setSignedIn] = useState(isSignedIn());
@@ -59,9 +63,8 @@ function Login({ onDone }: { onDone: () => void }) {
             value={phone} onChange={(e) => setPhone(e.target.value)} />
         </>}
         <label htmlFor="l-password">{challenge ? "Nova senha" : "Senha"}</label>
-        <input id="l-password" type="password" required autoFocus={Boolean(challenge)}
-          autoComplete={challenge ? "new-password" : "current-password"}
-          value={password} onChange={(e) => setPassword(e.target.value)} />
+        <PasswordInput id="l-password" required autoFocus={Boolean(challenge)}
+          autoComplete={challenge ? "new-password" : "current-password"} value={password} onChange={setPassword} />
         <div className="actions">
           <button className="primary" type="submit" disabled={busy}>{challenge ? "Definir senha" : "Entrar"}</button>
         </div>
@@ -74,7 +77,10 @@ function Layout() {
   const [page, setPage] = useState<Page>({ name: "Casas" });
   const [drawer, setDrawer] = useState(false);
   const { count, report } = useNotices();
-  const go: Go = (name, params) => { setPage({ name, params }); setDrawer(false); };
+  // each opening is a fresh page (choosing "Casas" again goes back to the list)
+  const [opened, setOpened] = useState(0);
+  const pageKey = `${page.name}-${opened}`;
+  const go: Go = (name, params) => { setPage({ name, params }); setOpened((n) => n + 1); setDrawer(false); };
 
   useEffect(() => {          // once on entering: the number of notices is there from the start
     Promise.all([api<HouseSummary[]>("GET", "/houses"), api<PendingInvite[]>("GET", "/invites")])
@@ -88,7 +94,7 @@ function Layout() {
   useEffect(() => { document.body.classList.add("signed-in"); }, []);
 
   const menuButton = (name: PageName, className?: string) => (
-    <button key={name} className={className} aria-current={page.name === name ? "page" : undefined} onClick={() => go(name)}>
+    <button key={name} id={PAGE_IDS[name]} className={className} aria-current={page.name === name ? "page" : undefined} onClick={() => go(name)}>
       {name}
       {name === "Avisos" && count > 0 && <span className="menu-count" id="notice-count" aria-label="avisos">{count > 99 ? "99+" : count}</span>}
     </button>
@@ -117,9 +123,16 @@ function Layout() {
         </aside>
         {drawer && <div id="backdrop" onClick={() => setDrawer(false)} />}
         <main id="content">
-          <Placeholder key={page.name + JSON.stringify(page.params ?? {})} name={page.name} />
+          <PageContent key={pageKey} page={page} go={go} />
         </main>
       </div>
     </>
   );
+}
+
+function PageContent({ page, go }: { page: Page; go: Go }) {
+  if (page.name === "Casas") return <Houses params={page.params} />;
+  if (page.name === "Avisos") return <Avisos go={go} />;
+  if (page.name === "Perfil") return <Profile />;
+  return <Defaults />;
 }
