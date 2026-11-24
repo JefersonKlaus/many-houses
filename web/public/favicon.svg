@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Minhas Casas">
+  <rect width="48" height="48" rx="12" fill="#0f4c5c"/>
+  <path d="M10 23.5 24 12l14 11.5" fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 21.5V36h20V21.5" fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linejoin="round"/>
+  <rect x="18" y="29" width="3.4" height="7" rx="1" fill="#f2b544"/>
+  <rect x="22.3" y="26" width="3.4" height="10" rx="1" fill="#f2b544"/>
+  <rect x="26.6" y="23" width="3.4" height="13" rx="1" fill="#f2b544"/>
+</svg>
