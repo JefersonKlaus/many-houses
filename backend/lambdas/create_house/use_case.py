@@ -5,7 +5,8 @@ house. Bought with partners (`partners`: [{phone, cents}] and `owner_share_cents
 here, once, in the act of buying, and each partner is invited by phone.
 Bought together with other houses in one deal (`also_bought`: [{name, address, purchase_price_cents, ...}]):
 the entrada and the plan are for the whole deal and every house takes its part of them, in proportion to
-its price. The answer is the page of the house of the form. A deal can't have partners.
+its price. The answer is the page of the house of the form. The partners (and what each one paid) are for the
+whole deal too: each one's part is spread over the houses and they are invited to each of them.
 The user is its owner. Answers the house's page (application.house_view).
 Depends only on the core's domain and ports, never on AWS."""
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any, Mapping
 
 from houses_core.application import Access, check_house_limit, house_view, today, user_name
 from houses_core.domain.errors import ValidationError
-from houses_core.domain.models import OWNER_MEMBER_ID, House, Installment, PendingInvite, bought_with_partners
+from houses_core.domain.models import OWNER_MEMBER_ID, House, Installment, PendingInvite, bought_deal_with_partners
 from houses_core.ports import Dependencies
 
 
@@ -24,13 +25,8 @@ def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phon
     name = user_name(deps.repo, user, name)
     houses = [replace(h, owner_phone=phone, owner_name=name)
               for h in House.bundle_from_input(payload, payload.get("also_bought"))]
-    invites: tuple = ()
-    if len(houses) > 1:
-        if payload.get("partners"):
-            raise ValidationError("várias casas na mesma compra: convide os sócios depois, em cada casa")
-    else:
-        invites, shares = bought_with_partners(payload, houses[0].upfront_cents, phone, today())
-        houses = [replace(houses[0], invites=invites, purchase_shares=shares)]
+    deal = bought_deal_with_partners(payload, [h.upfront_cents for h in houses], phone, today())
+    houses = [replace(h, invites=invites, purchase_shares=shares) for h, (invites, shares) in zip(houses, deal)]
     installments = []
     if houses[0].payment_type == "installments":
         plan = payload.get("installments")
@@ -43,8 +39,8 @@ def create_house(deps: Dependencies, user: str, payload: Mapping[str, Any], phon
     for house in houses:
         deps.repo.save_house(user, house)
     deps.repo.save_installments(user, installments)
-    house = houses[0]
-    for invite in invites:
-        deps.repo.save_pending_invite(PendingInvite(invite.id, invite.phone, user, house.id, house.name, phone,
-                                                    invite.date, name))
-    return house_view(deps, Access(user, house, OWNER_MEMBER_ID))
+    for house in houses:
+        for invite in house.invites:
+            deps.repo.save_pending_invite(PendingInvite(invite.id, invite.phone, user, house.id, house.name, phone,
+                                                        invite.date, name))
+    return house_view(deps, Access(user, houses[0], OWNER_MEMBER_ID))

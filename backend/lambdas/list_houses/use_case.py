@@ -1,17 +1,18 @@
 """Use case (application layer): every house of the user, theirs and the ones they are a partner in, by name, each with
-what it cost (purchase, renovation, total), how its payment is going and the user's role in it.
+what it cost (purchase, renovation, total), how its payment is going, the user's role in it and what is due soon
+(`due_soon`, application.due_soon: `on` is the day, today by default).
 Depends only on the core's domain and ports, never on AWS."""
 from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any
 
-from houses_core.application import public_house, sorted_houses, totals
+from houses_core.application import due_soon, public_house, sorted_houses, today, totals
 from houses_core.domain.models import House
 from houses_core.ports import Dependencies
 
 
-def list_houses(deps: Dependencies, user: str) -> list[dict[str, Any]]:
+def list_houses(deps: Dependencies, user: str, on: str = "") -> list[dict[str, Any]]:
     costs, installments = defaultdict(list), defaultdict(list)
     for expense in deps.repo.list_expenses(user):           # every own house's costs in one query
         costs[expense.house_id].append(expense)
@@ -31,5 +32,6 @@ def list_houses(deps: Dependencies, user: str) -> list[dict[str, Any]]:
         costs[house.id] = deps.repo.list_expenses(owner, house_id)
         installments[house.id] = deps.repo.list_installments(owner, house_id)
     return [{**public_house(house), "role": role[house.id],
-             "totals": totals(house, costs[house.id], installments[house.id])}
+             "totals": totals(house, costs[house.id], installments[house.id]),
+             "due_soon": due_soon(house, costs[house.id], installments[house.id], on or today())}
             for house in sorted_houses(houses)]

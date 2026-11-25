@@ -1,4 +1,5 @@
-"""Local server to try the frontend without AWS: serves the site and the API (the SAME code as the
+"""Local server to try the frontend without AWS: serves the site (the build of web/: `npm run build` in web/,
+or `python dev.py serve`, which builds it) and the API (the SAME code as the
 Lambdas, one per action, routed like API Gateway) with an in-memory database, and NO login (no Cognito):
 every request is the same user.
 
@@ -45,6 +46,7 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
        "connect-src 'self' https://cognito-idp.sa-east-1.amazonaws.com; frame-ancestors 'none'; "
        "base-uri 'none'; form-action 'self'")
 CONTENT_TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml"}
+SITE = ROOT / "web" / "dist"                        # the React + TypeScript frontend, built
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -86,11 +88,14 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _static(self):
         path = urlparse(self.path).path.lstrip("/") or "index.html"
-        file = (ROOT / "frontend" / path).resolve()
+        file = (SITE / path).resolve()
         if path == "js/config.js":
             body = self._config().encode()
-        elif (ROOT / "frontend").resolve() in file.parents and file.is_file():
+        elif SITE.resolve() in file.parents and file.is_file():
             body = file.read_bytes()
+        elif path == "index.html":
+            self.send_error(503, "The site is not built: run `npm install && npm run build` in web/ (or `python dev.py serve`)")
+            return
         else:
             self.send_error(404)
             return

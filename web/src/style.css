@@ -1,21 +1,32 @@
+/* ------------------------------------------------------------------ brand: Minhas Casas
+   Petróleo (deep teal: trust, the real-estate side) + Ouro (amber: the value the house gains), on warm neutrals.
+   Every color is a token here; the dark theme redefines them. */
 :root {
-  --page-max: 860px;            /* pages are never wider than this... */
+  --page-max: 920px;            /* pages are never wider than this... */
   --page-min: 320px;            /* ...nor narrower than this (or the whole screen, if it is smaller) */
-  --background: #f6f8f7; --surface: #ffffff; --text: #1f2a28; --muted: #5f6f6b;
-  --border: #dde5e2; --brand: #1d6b5a; --brand-light: #e1f0eb; --danger: #b3261e; --ok: #1f7a4d;
-  --warn: #8a5a00; --warn-light: #fbefd5;
-  --cat-material: #1d6b5a; --cat-labor: #3f51b5; --cat-services: #c25e00; --cat-project: #8e24aa; --cat-other: #757575;
+  --background: #f5f7f8; --surface: #ffffff; --text: #16262c; --muted: #5b6b72;
+  --border: #e1e7ea; --brand: #0f4c5c; --brand-strong: #0a3742; --brand-light: #e3eff2;
+  --accent: #f2b544; --accent-light: #fdf3df;
+  --danger: #b3261e; --ok: #1f7a4d; --warn: #8a5a00; --warn-light: #fbefd5;
+  --logo-bg: #0f4c5c; --logo-line: #ffffff; --on-brand: #ffffff;
+  --shadow: 0 1px 2px rgba(16, 38, 44, .06), 0 4px 16px rgba(16, 38, 44, .06);
+  --radius: 12px;
+  --cat-material: #0f4c5c; --cat-labor: #3f6fb5; --cat-services: #d08a1e; --cat-project: #8a4fb0; --cat-other: #7a8a90;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #121816; --surface: #1b2321; --text: #e9f1ee; --muted: #9db0aa;
-    --border: #2d3a37; --brand: #5fc7a8; --brand-light: #213731; --danger: #ff8a80; --ok: #6fd3a0;
-    --warn: #f3cf6b; --warn-light: #3a3220;
-    --cat-material: #5fc7a8; --cat-labor: #8c9cf2; --cat-services: #f0a050; --cat-project: #cf8ae0; --cat-other: #a0a0a0;
+    --background: #0d1619; --surface: #142126; --text: #e6eef0; --muted: #94a8ae;
+    --border: #23353b; --brand: #5ec4d6; --brand-strong: #8ad6e3; --brand-light: #17343c;
+    --accent: #f5c264; --accent-light: #3a2f1a;
+    --danger: #ff8a80; --ok: #6fd3a0; --warn: #f3cf6b; --warn-light: #3a3220;
+    --logo-bg: #5ec4d6; --logo-line: #0d1619; --on-brand: #0d1619;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .25);
+    --cat-material: #5ec4d6; --cat-labor: #8cabf2; --cat-services: #f5c264; --cat-project: #cf9ae6; --cat-other: #a0b0b5;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--background); color: var(--text); font: 16px/1.45 system-ui, sans-serif; }
+body { margin: 0; background: var(--background); color: var(--text); font: 16px/1.5 "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased; }
 
 /* ------------------------------------------------------------------ layout: mobile first */
 /* Phones: a sticky top bar with ☰; the sidebar is an off-canvas drawer over a dimmed backdrop. */
@@ -57,7 +68,7 @@ main { width: 100%; max-width: var(--page-max); min-width: min(100%, var(--page-
 /* ------------------------------------------------------------------ basics */
 h1, h2 { margin: 0 0 12px; font-size: 1.25rem; }
 h1 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; margin-bottom: 12px; }
 /* tabs of a house's page: Reforma, Compra, Prestações */
 .tabs { display: flex; gap: 4px; margin: 4px 0 12px; border-bottom: 1px solid var(--border); overflow-x: auto; }
 .tabs [role=tab] { flex: none; padding: 10px 14px; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
@@ -73,7 +84,7 @@ input, select, textarea { width: 100%; padding: 10px; font: inherit; color: var(
 textarea { resize: vertical; }
 button.primary, button.secondary, button.danger { padding: 10px 16px; border-radius: 8px; font: inherit;
   cursor: pointer; border: 1px solid var(--brand); }
-button.primary { background: var(--brand); color: #fff; }
+button.primary { background: var(--brand); color: var(--on-brand); }
 button.secondary { background: none; color: var(--brand); }
 button.danger { background: none; border-color: var(--danger); color: var(--danger); }
 button.small { padding: 6px 10px; font-size: .9rem; }
@@ -99,6 +110,7 @@ button.link.back { padding-left: 0; color: var(--brand); margin-bottom: 4px; }
   stroke-linecap: round; stroke-linejoin: round; }
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 32px 20px; text-align: center; }
 .empty-state h2 { margin: 0; }
+.empty-art { max-width: 100%; height: auto; margin-bottom: 8px; }
 .empty-state button { margin-top: 12px; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 /* "Forma de pagamento": two choices side by side, like a switch */
@@ -336,3 +348,60 @@ dialog.dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .card.settings { max-width: 560px; }
 .card.settings h2 { margin-top: 0; }
 .card.settings dl { margin: 14px 0 4px; }
+
+/* suggestions under a text field (recurring costs' names): as wide as the field, square list like a regular dropdown */
+.autocomplete { position: relative; }
+.suggestions { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 0; padding: 0; list-style: none;
+  max-height: 11rem; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-top: 0;
+  border-radius: 0; box-shadow: 0 4px 10px rgba(0, 0, 0, .15); }
+.suggestions li { padding: 9px 10px; cursor: pointer; }
+.suggestions li:hover, .suggestions li.active { background: var(--brand-light); }
+.suggestions[hidden] { display: none; }
+
+/* the houses list's warning: bills and installments due in two days or less */
+.due-card { border-color: var(--warn); background: var(--warn-light); color: var(--warn); }
+.due-card h2 { margin-top: 0; color: inherit; }
+.due-card ul { margin: 0; padding-left: 1.2rem; }
+.due-card li.late { font-weight: 600; }
+.due-card button.link { padding: 0; font-weight: 600; color: inherit; text-decoration: underline; }
+
+/* a tab with a long and a short name: the short one on a phone */
+.tab-short { display: none; }
+@media (max-width: 640px) { .tab-long { display: none; } .tab-short { display: inline; } }
+
+/* the number of notices beside "Avisos" in the menu */
+.menu-count { display: inline-block; min-width: 1.4rem; margin-left: 8px; padding: 0 6px; border-radius: 999px; text-align: center;
+  font-size: .75rem; font-weight: 700; line-height: 1.4rem; color: #fff; background: var(--danger); }
+.menu-count[hidden] { display: none; }
+
+/* recurring bills: a month at a time, one line per bill */
+.month-nav { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.month-nav strong { min-width: 10rem; text-align: center; text-transform: capitalize; }
+.badge.soon { color: var(--warn); background: var(--warn-light); }
+.list-item.bill { flex-wrap: wrap; }
+.bill-side { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.bill-side .badge { margin-left: 0; }
+.bill-amount { font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ brand pieces */
+.logo { display: inline-flex; align-items: center; gap: 10px; }
+.logo-mark { flex: none; display: block; }
+.logo-word { font-size: 1.12rem; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
+.logo-word b { color: var(--brand); font-weight: 800; }
+.brand { display: block; padding: 6px 10px 18px; }
+h1 { letter-spacing: -.02em; font-weight: 700; }
+button.primary { background: var(--brand); border-color: var(--brand); font-weight: 600; }
+button.primary:hover { background: var(--brand-strong); border-color: var(--brand-strong); }
+nav button[aria-current="page"] { box-shadow: inset 3px 0 0 var(--accent); }
+.menu-count { background: var(--accent); color: #2a1d00; }
+
+/* the login: the brand on a soft petróleo gradient */
+.login-page { max-width: none; width: 100%; margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px;
+  background: radial-gradient(1200px 600px at 10% -10%, var(--brand-light), transparent 60%),
+              radial-gradient(900px 500px at 110% 110%, var(--accent-light), transparent 60%), var(--background); }
+.login-page .card.login { width: min(400px, 100%); margin: 0; padding: 28px 24px; }
+.login-head { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 18px; text-align: center; }
+.login-head .logo { flex-direction: column; gap: 12px; }
+.login-head .logo-word { font-size: 1.5rem; }
+.login-head p { margin: 0; }
+.login-page .actions .primary { width: 100%; padding: 12px; }

@@ -155,9 +155,9 @@ def test_who_paid_what(deps):
     rows = {r["member_id"]: r for r in view["totals"]["by_member"]}
     # the owner paid the whole purchase up front while no share is given: entrada + costs
     assert rows[OWNER_MEMBER_ID] == {"member_id": OWNER_MEMBER_ID, "purchase_cents": 11_800_000,
-                                     "installments_cents": 1000, "renovation_cents": 70, "total_cents": 11_801_070}
+                                     "installments_cents": 1000, "renovation_cents": 70, "recurring_cents": 0, "total_cents": 11_801_070}
     assert rows[partner] == {"member_id": partner, "purchase_cents": 0, "installments_cents": 1000,
-                             "renovation_cents": 500, "total_cents": 1500}
+                             "renovation_cents": 500, "recurring_cents": 0, "total_cents": 1500}
     with pytest.raises(ValidationError, match="pago por"):
         create_expense(deps, OWNER, hid, expense_input(paid_by="abcdef12"))
     eid = next(e["id"] for e in view["expenses"] if e["amount_cents"] == 500)

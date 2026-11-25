@@ -34,3 +34,15 @@ def test_demo_data_keeps_the_users_name():
     assert {h.owner_name for h in deps.repo.list_houses("me")} == {"Carlos Lima"}
     (invite,) = deps.repo.list_pending_invites("+5511999990000")
     assert invite.from_name == "Marcos Pereira"
+
+
+def test_demo_data_has_warnings():
+    deps = Dependencies(MemoryRepository())
+    seed(deps, "me", date(2026, 11, 20))
+    soon = [(d["house_name"], d["type"], d["name"], d["days"]) for h in list_houses(deps, "me", "2026-11-20")
+            for d in h["due_soon"]]
+    assert ("Apartamento Centro 302", "installment", "Prestação", 2) in soon
+    assert ("Apartamento Centro 302", "recurring", "Condomínio", 2) in soon
+    assert ("Sobrado Vila Nova", "recurring", "Energia", 2) in soon
+    assert ("Sobrado Vila Nova", "recurring", "Internet", 1) not in soon          # paid this month
+    assert any(name == "Sobrado Vila Nova" and days < 0 for name, _, _, days in soon)   # something late

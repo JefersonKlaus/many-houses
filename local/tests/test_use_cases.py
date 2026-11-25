@@ -357,12 +357,124 @@ def test_more_installments_for_a_deal_and_deleting_one_house_of_it(deps):
     assert all(i["group_id"] == "" and i["total_cents"] == 0 for i in view["installments"])
 
 
-def test_a_deal_has_no_partners_and_its_entrada_fits_the_prices(deps):
-    with pytest.raises(ValidationError):
-        create_house(deps, OWNER, deal_input(partners=[{"phone": "11987654321", "cents": 1}]))
+def test_a_deal_with_partners_spreads_what_each_paid_over_the_houses(deps):
+    # up front: entrada 75.000,00 (50.000 + 25.000) + costs 18.000 + 0 = 93.000,00 in all
+    payload = deal_input(purchase_costs_cents=1_800_000, owner_share_cents=4_000_000,
+                         partners=[{"phone": "11987654321", "cents": 5_300_000}])
+    view = create_house(deps, OWNER, payload)
+    houses = sorted(deps.repo.list_houses(OWNER), key=lambda h: h.id != view["house"]["id"])
+    assert len(houses) == 2 and all(len(h.invites) == 1 for h in houses)
+    for house in houses:                                       # each house's shares add up to what it cost up front
+        assert sum(s.cents for s in house.purchase_shares) == house.upfront_cents
+    assert sum(s.cents for h in houses for s in h.purchase_shares if s.member_id == "00000000") == 4_000_000
+    assert sum(s.cents for h in houses for s in h.purchase_shares if s.member_id != "00000000") == 5_300_000
+    assert len({i.id for h in houses for i in h.invites}) == 2     # an invite for each house, same phone
+    assert len(deps.repo.list_pending_invites("+5511987654321")) == 2
+    with pytest.raises(ValidationError):                       # the shares must close with the whole deal
+        create_house(deps, OWNER, deal_input(owner_share_cents=1, partners=[{"phone": "11987654322", "cents": 1}]))
+
+
+def test_a_deal_has_its_entrada_fit_the_prices(deps):
     with pytest.raises(ValidationError):
         create_house(deps, OWNER, deal_input(down_payment_cents=80_000_000))
     assert deps.repo.list_houses(OWNER) == []
-    first, _ = deal(deps)
+
+
+def test_paying_an_installment_of_a_deal_by_a_partner_is_the_same_partner_in_each_house(deps):
+    from accept_invite.use_case import accept_invite
+    payload = deal_input(owner_share_cents=2_500_000, partners=[{"phone": "11987654321", "cents": 5_000_000}])
+    view = create_house(deps, OWNER, payload)
+    houses = deps.repo.list_houses(OWNER)
+    for invite in deps.repo.list_pending_invites("+5511987654321"):
+        accept_invite(deps, "partner-1", invite.id, "+5511987654321", "Ana")
+    first = get_house(deps, "partner-1", view["house"]["id"])
+    inst = first["installments"][0]
+    update_installment(deps, "partner-1", view["house"]["id"], inst["id"], {**inst, "paid_date": "2026-02-09"})
+    other = next(h for h in houses if h.id != view["house"]["id"])
+    paid_by = {i.house_id: i.paid_by for i in deps.repo.list_installments(OWNER) if i.paid_date}
+    partner_of = lambda house: next(p.id for p in deps.repo.get_house(OWNER, house.id).partners)    # noqa: E731
+    opened = next(h for h in houses if h.id == view["house"]["id"])
+    assert paid_by == {opened.id: partner_of(opened), other.id: partner_of(other)}      # each house: its own partner entry
+
+
+def test_recurring_bills_warn_two_days_before_they_are_due(deps, monkeypatch):
+    from set_recurring.use_case import set_recurring
+    monkeypatch.setattr("set_recurring.use_case.today", lambda: "2026-01-15")      # registered before the dates tried
+    hid = new_house(deps)
+    view = set_recurring(deps, OWNER, hid, {"bills": [{"name": "Energia", "day": 10}, {"name": "Água", "day": 31}]})
+    assert [(b["name"], b["day"]) for b in view["house"]["recurring_bills"]] == [("Energia", 10), ("Água", 31)]
+    soon = lambda on, only="": [(d["name"], d["days"]) for d in list_houses(deps, OWNER, on)[0]["due_soon"]  # noqa: E731
+                                if only in d["name"]]
+    assert soon("2026-03-07") == []                                        # three days to go
+    assert soon("2026-03-08") == [("Energia", 2)]
+    assert soon("2026-03-10") == [("Energia", 0)]
+    assert soon("2026-03-12") == [("Energia", -2)]                         # late, until it is paid
+    assert soon("2026-02-26", "Água") == [("Água", 2)]                             # day 31 in February: the 28th
+    assert soon("2026-02-28", "Água") == [("Água", 0)]
+    assert soon("2026-03-30", "Água") == [("Água", 1)]
+    new_expense(deps, hid, date="2026-03-09", category="recurring", description="energia", amount_cents=1000)
+    assert soon("2026-03-10") == []                                        # paid (same name, same month)
+    assert soon("2026-04-08") == [("Energia", 2)]                          # next month's comes again
+    assert soon("2026-03-31") == [("Água", 0)]                             # and the next month's, seen from the 31st
+
+
+def test_unpaid_installments_are_warned_too(deps):
+    hid = new_house(deps)
+    create_installments(deps, OWNER, hid, plan_input(first_due_date="2026-02-10", count=2))
+    soon = lambda on: [(d["type"], d["due_date"]) for d in list_houses(deps, OWNER, on)[0]["due_soon"]]  # noqa: E731
+    assert soon("2026-02-07") == []
+    assert soon("2026-02-08") == [("installment", "2026-02-10")]
+    assert soon("2026-03-15") == [("installment", "2026-02-10"), ("installment", "2026-03-10")]   # late ones stay
+    first = get_house(deps, OWNER, hid)["installments"][0]
+    update_installment(deps, OWNER, hid, first["id"], {**first, "paid_date": "2026-02-09"})
+    assert soon("2026-02-08") == []
+
+
+def test_invalid_recurring_bills(deps):
+    from set_recurring.use_case import set_recurring
+    hid = new_house(deps)
+    for bills, message in (([{"name": "", "day": 5}], "nome"), ([{"name": "Luz", "day": 32}], "dia"),
+                           ([{"name": "Luz", "day": 5}, {"name": "luz", "day": 6}], "duas vezes")):
+        with pytest.raises(ValidationError, match=message):
+            set_recurring(deps, OWNER, hid, {"bills": bills})
     with pytest.raises(ValidationError):
-        create_invite(deps, OWNER, first["house"]["id"], {"phone": "11987654321"})
+        set_recurring(deps, OWNER, hid, {})
+    view = set_recurring(deps, OWNER, hid, {"bills": [{"name": "Luz", "day": 5}]})
+    again = set_recurring(deps, OWNER, hid, {"bills": [{"name": "LUZ", "day": 6}]})
+    assert again["house"]["recurring_bills"][0]["id"] == view["house"]["recurring_bills"][0]["id"]
+    assert update_house(deps, OWNER, hid, house_input())["house"]["recurring_bills"][0]["day"] == 6   # kept
+
+
+def test_a_late_bill_paid_next_month_counts_for_its_own_month(deps, monkeypatch):
+    from set_recurring.use_case import set_recurring
+    monkeypatch.setattr("set_recurring.use_case.today", lambda: "2026-01-15")
+    hid = new_house(deps)
+    set_recurring(deps, OWNER, hid, {"bills": [{"name": "Energia", "day": 10}]})
+    soon = lambda on: [d["days"] for d in list_houses(deps, OWNER, on)[0]["due_soon"]]  # noqa: E731
+    assert soon("2026-11-12") == [-2]
+    new_expense(deps, hid, date="2026-11-12", category="recurring", description="Energia", reference="2026-10")
+    assert soon("2026-11-12") == [-2]                                      # that paid October's, not November's
+    view = create_expense(deps, OWNER, hid, expense_input(date="2026-12-03", category="recurring",
+                                                           description="Energia", reference="2026-11"))
+    assert "2026-11" in {e["reference"] for e in view["expenses"]}
+    assert soon("2026-12-03") == []
+    with pytest.raises(ValidationError, match="mês de referência"):
+        create_expense(deps, OWNER, hid, expense_input(category="recurring", reference="2026-13"))
+
+
+def test_a_cancelled_bill_stops_being_charged_and_keeps_its_history(deps, monkeypatch):
+    from set_recurring.use_case import set_recurring
+    monkeypatch.setattr("set_recurring.use_case.today", lambda: "2026-03-20")
+    hid = new_house(deps)
+    set_recurring(deps, OWNER, hid, {"bills": [{"name": "Netflix", "day": 10}]})
+    soon = lambda on: [d["due_date"] for d in list_houses(deps, OWNER, on)[0]["due_soon"]]  # noqa: E731
+    assert soon("2026-02-08") == []                                        # before it was registered: not charged
+    assert soon("2026-04-08") == ["2026-04-10"]
+    view = set_recurring(deps, OWNER, hid, {"bills": [{"name": "Netflix", "day": 10, "until": "2026-04"}]})
+    bill = view["house"]["recurring_bills"][0]
+    assert (bill["since"], bill["until"]) == ("2026-03", "2026-04")        # started in March, last charge in April
+    assert soon("2026-04-08") == ["2026-04-10"] and soon("2026-05-08") == []   # cancelled: no more warnings
+    view = set_recurring(deps, OWNER, hid, {"bills": [{"name": "Netflix", "day": 10}]})                # reactivated
+    assert view["house"]["recurring_bills"][0]["until"] == "" and soon("2026-05-08") == ["2026-05-10"]
+    with pytest.raises(ValidationError, match="último mês"):
+        set_recurring(deps, OWNER, hid, {"bills": [{"name": "Netflix", "day": 10, "until": "2026-13"}]})

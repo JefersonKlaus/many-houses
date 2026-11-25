@@ -102,19 +102,30 @@ jobs:
         working-directory: infra
         run: terraform apply -input=false tfplan
 
-      - name: Generate frontend/js/config.js with the AWS data
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the site (React + TypeScript)
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Generate js/config.js with the AWS data (loaded at runtime, not bundled)
         working-directory: infra
         run: |
+          mkdir -p ../web/dist/js
           printf 'export const CONFIG = { region: "%s", clientId: "%s", apiUrl: "%s" };\n' \
             "$AWS_REGION" \
             "$(terraform output -raw cognito_client_id)" \
-            "$(terraform output -raw api_url)" > ../frontend/js/config.js
-          cat ../frontend/js/config.js
+            "$(terraform output -raw api_url)" > ../web/dist/js/config.js
+          cat ../web/dist/js/config.js
 
       - name: Publish the site and clear the cache
         working-directory: infra
         run: |
-          aws s3 sync ../frontend "s3://$(terraform output -raw site_bucket)" \
+          aws s3 sync ../web/dist "s3://$(terraform output -raw site_bucket)" \
             --delete --cache-control "no-cache"
           aws cloudfront create-invalidation \
             --distribution-id "$(terraform output -raw cloudfront_id)" --paths "/*" > /dev/null

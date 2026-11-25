@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .domain.errors import NotFound, ValidationError
 from .domain.models import (EXPENSE_CATEGORIES, OWNER_MEMBER_ID, Expense, House, Installment, TimelineEntry,
-                            photo_key)
+                            add_months, photo_key)
 from .ports import Dependencies, Repository
 
 MAX_HOUSES = 500
@@ -124,6 +124,15 @@ def group_siblings(repo: Repository, owner: str, installment: Installment) -> li
                   key=lambda i: i.house_id)
 
 
+def same_member(source: House, member_id: str, target: House) -> str:
+    """Who `member_id` of one house of a deal is in another house of it: the owner is the owner everywhere, a
+    partner is found by phone (each house has its own ids); "" (the owner) if they are not in the other."""
+    if member_id in ("", OWNER_MEMBER_ID):
+        return member_id
+    phone = next((m["phone"] for m in members(source) if m["id"] == member_id), None)
+    return next((m["id"] for m in members(target) if phone and m["phone"] == phone), "")
+
+
 def leave_bundle(repo: Repository, owner: str, house: House) -> None:
     """A house of a deal was deleted: what is left of the deal keeps its installments, now adding up to
     the houses that remain (and a house left alone is just a house again)."""
@@ -187,12 +196,20 @@ def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Ins
     """What a house cost: the purchase (price + its costs), the renovation (by category and by area)
     and the sum. `payment`: how the price is being paid, the entrada plus the installments paid and open.
     `by_area`: each of the house's areas, in its order, with its costs; `no_area_cents`: costs with no area.
-    `by_member`: what each member put in so far (see `by_member`)."""
+    `recurring_cents`: the recurring costs (energy, water, internet...), by name (their description, ignoring case) in
+    `by_recurring` [{name, cents, count}], the biggest first; they are
+    not renovation, but count in `total_cents`. `by_member`: what each member put in so far (see `by_member`)."""
     expenses, installments = list(expenses), list(installments)
     by_category = dict.fromkeys(EXPENSE_CATEGORIES, 0)
+    by_recurring: dict[str, dict[str, Any]] = {}
     by_area = {a.id: {"id": a.id, "name": a.name, "cents": 0, "count": 0} for a in house.areas}
     no_area = count = 0
     for e in expenses:
+        if e.recurring:
+            group = by_recurring.setdefault(e.description.casefold(), {"name": e.description, "cents": 0, "count": 0})
+            group["cents"] += e.amount_cents
+            group["count"] += 1
+            continue
         by_category[e.category] += e.amount_cents
         count += 1
         if e.area_id in by_area:
@@ -200,22 +217,27 @@ def totals(house: House, expenses: Iterable[Expense], installments: Iterable[Ins
             by_area[e.area_id]["count"] += 1
         else:
             no_area += e.amount_cents
-    renovation = sum(by_category.values())
+    by_recurring = sorted(by_recurring.values(), key=lambda g: (-g["cents"], g["name"]))
+    renovation, recurring = sum(by_category.values()), sum(g["cents"] for g in by_recurring)
+    invested = house.purchase_total_cents + renovation + recurring
     return {"purchase_cents": house.purchase_total_cents, "renovation_cents": renovation,
-            "total_cents": house.purchase_total_cents + renovation, "expense_count": count,
+            "recurring_cents": recurring, "by_recurring": by_recurring,
+            "recurring_count": sum(1 for e in expenses if e.recurring),
+            "total_cents": invested, "expense_count": count,
             "by_category": by_category, "by_area": list(by_area.values()), "no_area_cents": no_area,
             "payment": payment(house, installments),
-            "sale": sale(house, house.purchase_total_cents + renovation),
+            "sale": sale(house, invested),
             **by_member(house, expenses, installments)}
 
 
 def by_member(house: House, expenses: list[Expense], installments: list[Installment]) -> dict[str, Any]:
     """How much each member actually put into the house so far: their share of the purchase (what was
-    paid up front), the installments they paid and the renovation costs they paid. A record with no
+    paid up front), the installments they paid and the renovation and recurring costs they paid. A record with no
     `paid_by` (or of someone no longer in the house: a declined invite) counts for the owner. `purchase_unassigned_cents`:
     what was paid up front that the shares don't cover yet (negative: the shares add up to more)."""
     ids = house.member_ids
-    rows = {m: {"member_id": m, "purchase_cents": 0, "installments_cents": 0, "renovation_cents": 0} for m in ids}
+    rows = {m: {"member_id": m, "purchase_cents": 0, "installments_cents": 0, "renovation_cents": 0,
+                              "recurring_cents": 0} for m in ids}
     who = lambda member_id: member_id if member_id in rows else OWNER_MEMBER_ID  # noqa: E731
     if house.purchase_shares:
         for share in house.purchase_shares:
@@ -228,9 +250,10 @@ def by_member(house: House, expenses: list[Expense], installments: list[Installm
         if i.paid:
             rows[who(i.paid_by)]["installments_cents"] += i.amount_cents
     for e in expenses:
-        rows[who(e.paid_by)]["renovation_cents"] += e.amount_cents
+        rows[who(e.paid_by)]["recurring_cents" if e.recurring else "renovation_cents"] += e.amount_cents
     for row in rows.values():
-        row["total_cents"] = row["purchase_cents"] + row["installments_cents"] + row["renovation_cents"]
+        row["total_cents"] = (row["purchase_cents"] + row["installments_cents"] + row["renovation_cents"]
+                              + row["recurring_cents"])
     return {"by_member": list(rows.values()), "purchase_unassigned_cents": unassigned}
 
 
@@ -258,9 +281,40 @@ def public_house(house: House) -> dict[str, Any]:
     """The house as the screens get it: the partners' logins (`user`) are not shown, only their phones."""
     data = house.to_dict()
     data["partners"] = [{"id": p.id, "name": p.name, "phone": p.phone} for p in house.partners]
-    for key in ("areas", "invites", "purchase_shares"):        # lists, as in the JSON the screens get
+    for key in ("areas", "invites", "purchase_shares", "recurring_bills"):        # lists, as in the JSON the screens get
         data[key] = list(data[key])
     return data
+
+
+WARN_DAYS = 2           # a bill or an installment due in this many days (or less) is warned about
+
+
+def _days_between(first: str, last: str) -> int:
+    return (date.fromisoformat(last) - date.fromisoformat(first)).days
+
+
+def due_soon(house: House, expenses: Iterable[Expense], installments: Iterable[Installment],
+             on: str) -> list[dict[str, Any]]:
+    """What the house has to pay soon, on the day `on`: its unpaid installments and its recurring bills due in up to
+    WARN_DAYS days (or already late: an installment at any time, a bill from this month). A bill is paid when a
+    recurring cost with its name (ignoring case) refers to the month of its due date (Expense.month). `days`: until the
+    due date (negative: late), the soonest first."""
+    due = []
+    for i in installments:
+        if not i.paid and _days_between(on, i.due_date) <= WARN_DAYS:
+            due.append({"house_id": house.id, "house_name": house.name, "type": "installment", "name": "Prestação",
+                        "due_date": i.due_date, "days": _days_between(on, i.due_date), "amount_cents": i.amount_cents})
+    paid = {(e.description.casefold(), e.month) for e in expenses if e.recurring}
+    first_of_month = on[:8] + "01"
+    for bill in house.recurring_bills:
+        for month in (first_of_month, add_months(first_of_month, 1)):
+            last_day = (date.fromisoformat(add_months(month, 1)) - timedelta(days=1)).day
+            due_date = f"{month[:8]}{min(bill.day, last_day):02d}"
+            days = _days_between(on, due_date)
+            if bill.due_in(month[:7]) and days <= WARN_DAYS and (bill.name.casefold(), month[:7]) not in paid and (days >= 0 or month == first_of_month):
+                due.append({"house_id": house.id, "house_name": house.name, "type": "recurring", "name": bill.name,
+                            "due_date": due_date, "days": days, "amount_cents": 0})
+    return sorted(due, key=lambda d: (d["days"], d["house_name"], d["name"]))
 
 
 def sorted_timeline(entries: Iterable[TimelineEntry]) -> list[TimelineEntry]:
@@ -308,5 +362,6 @@ def house_view(deps: Dependencies, access: Access) -> dict[str, Any]:
             "expenses": [{**e.to_dict(), "nf_photo_url": url(e.nf_photo), "material_photo_url": url(e.material_photo)}
                          for e in expenses],
             "installments": [i.to_dict() for i in installments],
+            "due_soon": due_soon(house, expenses, installments, today()),
             "timeline": [{**t.to_dict(), "photo_urls": [url(p) for p in t.photos]} for t in timeline],
             "totals": totals(house, expenses, installments)}

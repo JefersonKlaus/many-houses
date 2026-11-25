@@ -6,18 +6,28 @@ marked when paid) and every renovation cost (material, labor, services, project,
 linked to the area of the house it went to (kitchen, roof...), with the totals per house, per
 category, per area (which part costs the most) and for all houses together. Given the profit wanted
 (%), it tells for how much to sell each house today, as it is. A house bought with partners is
-shared with them (invited by phone), and the app shows how much each one put in.
+shared with them (invited by phone), and the app shows how much each one put in. Recurring costs
+(energy, water, internet, gas, condo, IPTU...) are registered bill by bill, each paid by a partner: they are
+an expense with `category: "recurring"` whose description is its name ("Energia"; the screen suggests the names already used), kept apart from the renovation in the totals
+(`recurring_cents`, `by_recurring`) and counted in the total invested. The bills a house has every
+month and the day each is due are set with `PUT /houses/{id}/recurring` (`bills`: [{name, day}]); two days
+before a due date (or after it, until paid) `GET /houses` lists it in the house's `due_soon`, together with its
+unpaid installments, and the houses list shows a warning. A bill counts as paid when a recurring cost with its
+name refers to the month of its due date (`reference`, "YYYY-MM"; by default the month of the payment's date, so a
+late November bill paid in December is still November's). The screen is organized like an accounts-payable list: a
+month at a time, each bill with its state (paid, due soon, late, open) and a Pagar button; the number of notices
+shows beside "Avisos" in the menu.
 
 The app's screens are in Brazilian Portuguese; code and docs are in English.
 
 ## Run it locally
 
-Needs Python 3.12+ (and Node 22 for the JS syntax check).
+Needs Python 3.12+ and Node 22 (to build the site).
 
 ```bash
 python dev.py setup             # once: creates .venv/ and downloads Chromium
 python dev.py serve             # http://127.0.0.1:8765
-python dev.py serve --empty     # start with nothing registered
+python dev.py serve --empty     # start as a new user, with nothing registered (also --new)
 ```
 
 No AWS, no login, no configuration. It opens with demo data ([local/seed.py](local/seed.py)): four
@@ -27,7 +37,7 @@ always dated around today. Data lives in memory and is gone when you stop the se
 ## Run the tests
 
 ```bash
-python dev.py test    # backend tests + JS syntax (seconds)
+python dev.py test    # backend tests + the site's type-check and build
 python dev.py e2e     # browser test in a real Chromium
 python dev.py all     # both: what CI runs
 ```
@@ -40,7 +50,7 @@ python dev.py all     # both: what CI runs
 ## Architecture
 
 ```
-Browser ──► CloudFront ──► S3                 the site (HTML/CSS/JS, no build)
+Browser ──► CloudFront ──► S3                 the site (React + TypeScript, built with Vite)
    │
    ├──► API Gateway ──► one Lambda per action ──► DynamoDB
    │    (checks the Cognito login)          └──► signs photo uploads and links
@@ -48,7 +58,7 @@ Browser ──► CloudFront ──► S3                 the site (HTML/CSS/JS,
 ```
 
 ```
-frontend/   the site                         deployed to S3
+web/        the site (React + TypeScript)    built, then deployed to S3
 backend/    the Lambdas                      deployed to AWS Lambda
 infra/      Terraform for everything in AWS
 local/      local server, in-memory database, tests   never deployed
@@ -57,19 +67,24 @@ dev.py      the commands above
 
 ### Frontend
 
-Plain JavaScript modules, no framework, no build step.
+React 19 + TypeScript (strict), built with Vite into `web/dist/`. No router or state library: a few pages as
+plain state, and each change to a house answers the whole house's page, drawn at once (one request per change).
 
 ```
-frontend/
-  index.html, style.css
-  js/app.js            menu and login screen
-  js/api.js            every call to the backend
-  js/auth.js           Cognito login (tokens)
-  js/config.js         where the API is (written by the deploy; empty in the repo)
-  js/screens/houses.js the houses: list, one house's page, the forms
-  js/screens/settings.js the Configurações group (bottom of the menu): Perfil, Predefinições
-  js/screens/password.js Alterar senha (Perfil > Segurança)
+web/
+  index.html, public/favicon.svg
+  src/main.tsx               loads js/config.js, then the app
+  src/App.tsx                login screen, layout (menu, notices count) and pages
+  src/api.ts, auth.ts        every call to the backend; the Cognito login (tokens)
+  src/config.ts              js/config.js: where the API is (written by the deploy, loaded at runtime, not bundled)
+  src/types.ts, format.ts    what the API answers; money, dates and other values on screen
+  src/ui.tsx, Logo.tsx       dialogs, the ⋮ menu, fields, pages of a list...; the brand
+  src/screens/Avisos.tsx     invites and what is due soon
+  src/screens/Settings.tsx   the Configurações group: Perfil (and Alterar senha), Predefinições
+  src/screens/houses/        the list, one house's page (tabs), the house form, the dialogs
 ```
+
+`cd web && npm run dev` serves the site with hot reload, sending `/api` to the local server (`python dev.py serve`).
 
 The frontend doesn't know whether the backend is AWS or local: it calls `CONFIG.apiUrl`.
 The deploy writes a `config.js` with the real API; the local server returns its own `config.js`
@@ -148,7 +163,7 @@ Rules worth knowing:
   installments, which carry `total_cents` (the whole installment) and a `group_id` linking the same month of
   every house. Paying, changing the due date or the total (`total_cents`, split again in the same
   proportion) or deleting one of them does the same to all. `bundle` in a house's page lists the houses and
-  their `percent`. A deal can't have partners. Deleting a house leaves the others with what is theirs.
+  their `percent`. Partners (`owner_share_cents`, `partners`) are for the whole deal: what each one paid is spread over the houses (each house's shares add up to what it cost up front) and each partner is invited to every house; whoever pays a shared installment is the same person (by phone) in each house. Deleting a house leaves the others with what is theirs.
 - Suggested sale price today = total invested (purchase + renovation) + `target_profit_percent` of it.
 - A house lists the areas that need renovation (`areas`: the names; the API gives each an id, kept
   while the name is the same, ignoring case). A cost may be linked to one (`area_id`). An area with
@@ -174,13 +189,13 @@ Rules worth knowing:
 
 ### Local
 
-`local/server.py` serves `frontend/` and plays API Gateway: `local/api_gateway.py` reads the same
+`local/server.py` serves the built site (`web/dist/`) and plays API Gateway: `local/api_gateway.py` reads the same
 `lambda.json` files and calls the same Lambdas, with `local/memory_repository.py` instead of
 DynamoDB. It only listens on 127.0.0.1.
 
 ## Deploy
 
-Everything goes through GitHub Actions, with no terminal: a push runs every test (Python, JS and the
+Everything goes through GitHub Actions, with no terminal: a push runs every test (Python, the site's type-check and build, and the
 browser test), then Terraform creates or updates all of AWS (Lambdas, API, Cognito, table, site),
 then the site is published. Two environments, each in its own AWS account:
 

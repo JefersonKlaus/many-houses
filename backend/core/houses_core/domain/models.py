@@ -14,15 +14,17 @@ from .errors import ValidationError
 
 ITEM_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 MAX_AMOUNT_CENTS = 10_000_000_000           # R$ 100 milhões: no single amount is bigger than this
 MAX_INSTALLMENTS_AT_ONCE = 600              # 50 years of monthly installments
 
-# The screens show these in Portuguese (frontend/js/screens/houses.js).
+# The screens show these in Portuguese (web/src/screens/houses/context.tsx).
 HOUSE_STATUSES = ("renovating", "ready", "sold")                         # em reforma, pronta, vendida
 PAYMENT_TYPES = ("cash", "installments")                                  # à vista, parcelado
 MAX_PROFIT_PERCENT = 1000
 MAX_AREAS = 30
 MAX_PARTNERS = 10
+MAX_RECURRING_BILLS = 30        # the recurring costs one house schedules (energy, water...)
 MAX_BUNDLE_HOUSES = 10          # houses bought at once, in one deal
 MAX_TIMELINE_PHOTOS = 12        # photos in one timeline entry
 OWNER_MEMBER_ID = "00000000"    # the house's owner among its members (in `paid_by` and in the purchase shares)
@@ -30,6 +32,8 @@ _PHONE_RE = re.compile(r"^[1-9]{2}\d{8,9}$")
 MAX_AREA_NAME = 40
 EXPENSE_CATEGORIES = ("material", "labor", "services", "project", "other")  # material, mão de obra, serviços,
                                                                           # projeto e documentação, outros
+RECURRING_CATEGORY = "recurring"    # a recurring cost (custo recorrente): a bill that comes every month; its description ("Energia",
+                                    # "Internet"...) is what groups them
 
 # How each API field is named in the (Portuguese) error messages shown to the user.
 FIELD_LABELS = {
@@ -42,6 +46,7 @@ FIELD_LABELS = {
     "target_profit_percent": "lucro desejado", "areas": "áreas", "area_id": "área", "paid_by": "pago por",
     "phone": "celular", "nf_photo": "foto da NF", "material_photo": "foto do material ou serviço",
     "caption": "descrição", "default_profit_percent": "lucro desejado padrão", "total_cents": "valor total da parcela",
+    "day": "dia do vencimento", "until": "último mês", "reference": "mês de referência",
 }
 
 
@@ -182,6 +187,56 @@ def _areas(payload: Mapping[str, Any], previous: tuple[Area, ...]) -> tuple[Area
 
 
 @dataclass(frozen=True)
+class RecurringBill:
+    """A bill the house has every month (energy, water, internet...) and the day of the month it is due. Each
+    time it is paid it is registered as a cost with the same name (Expense, category "recurring")."""
+    id: str
+    name: str
+    day: int
+    since: str = ""         # the first month it is due, "YYYY-MM" (the month it was registered); "" = always
+    until: str = ""         # the last month it is due, "YYYY-MM": cancelled after it (Netflix...); "" = still active
+
+    def due_in(self, month: str) -> bool:
+        """Whether it is charged in `month` ("YYYY-MM")."""
+        return (not self.since or month >= self.since) and (not self.until or month <= self.until)
+
+
+def _month(value: Any, field: str) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or not _MONTH_RE.match(value):
+        raise ValidationError(f"{FIELD_LABELS[field]}: use AAAA-MM")
+    parse_date(f"{value}-01", FIELD_LABELS[field])
+    return value
+
+
+def _recurring_bills(payload: Mapping[str, Any], previous: tuple[RecurringBill, ...],
+                     today: str = "") -> tuple[RecurringBill, ...]:
+    """The `bills` [{name, day, until}] typed in, in order. A name that already existed (ignoring case) keeps its
+    id and the month it started in; a new one starts in `today`'s month. `until` ("YYYY-MM") ends it after that month."""
+    items = payload.get("bills")
+    if not isinstance(items, list) or len(items) > MAX_RECURRING_BILLS:
+        raise ValidationError(f"contas recorrentes: no máximo {MAX_RECURRING_BILLS}")
+    known = {b.name.casefold(): b for b in previous}
+    bills, seen = [], set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise ValidationError("contas recorrentes: informe o nome e o dia do vencimento")
+        name = _text(item, "name", 60)
+        day = item.get("day")
+        if isinstance(day, bool) or not isinstance(day, int) or not 1 <= day <= 31:
+            raise ValidationError("dia do vencimento: de 1 a 31")
+        if name.casefold() in seen:
+            raise ValidationError(f"contas recorrentes: \"{name}\" aparece duas vezes")
+        seen.add(name.casefold())
+        until = _month(item.get("until"), "until")
+        before = known.get(name.casefold())
+        bills.append(RecurringBill(before.id if before else new_id(), name, day,
+                                   before.since if before else today[:7], until))
+    return tuple(bills)
+
+
+@dataclass(frozen=True)
 class Partner:
     """Someone who bought the house together with its owner and accepted the invite: `user` is their
     login (`sub`), `id` is how the house's records refer to them (`paid_by`, the purchase shares)."""
@@ -213,22 +268,19 @@ def brl(cents: int) -> str:
     return f"{'-' if cents < 0 else ''}R$ {whole:,}".replace(",", ".") + f",{rest:02d}"
 
 
-def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_phone: str,
-                         today: str) -> tuple[tuple[Invite, ...], tuple[Share, ...]]:
-    """When a house is registered as bought with partners: `partners` [{phone, cents}] and the owner's own
-    `owner_share_cents`, how much each one paid at the purchase. Each partner gets an invite; the shares
-    must add up to what was paid at the purchase (the split is only set here, in the act of buying)."""
+def _partner_amounts(payload: Mapping[str, Any], owner_phone: str) -> tuple[int, list[tuple[str, int]]]:
+    """`owner_share_cents` and `partners` [{phone, cents}] of the form: the owner's part and each partner's
+    (phone, cents), in order. No partners: (0, [])."""
     partners = payload.get("partners") or []
     if not isinstance(partners, list) or len(partners) > MAX_PARTNERS:
         raise ValidationError(f"sócios: no máximo {MAX_PARTNERS}")
     if not partners:
-        return (), ()
+        return 0, []
     def amount(value: Any) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_AMOUNT_CENTS:
             raise ValidationError("divisão da compra: informe quanto cada um pagou")
         return value
-    owner_share = amount(payload.get("owner_share_cents", 0))
-    invites, shares, seen = [], [Share(OWNER_MEMBER_ID, owner_share)] if owner_share else [], {owner_phone}
+    seen, pairs = {owner_phone}, []
     for partner in partners:
         if not isinstance(partner, Mapping):
             raise ValidationError("sócios: informe o celular e quanto cada um pagou")
@@ -236,16 +288,55 @@ def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_p
         if phone in seen:
             raise ValidationError("sócios: o mesmo celular aparece duas vezes (ou é o seu)")
         seen.add(phone)
-        invite = Invite(new_id(), phone, today)
-        invites.append(invite)
-        cents = amount(partner.get("cents"))
-        if cents:
-            shares.append(Share(invite.id, cents))
-    total = sum(s.cents for s in shares)
-    if total != upfront_cents:
-        raise ValidationError(f"divisão da compra: a soma ({brl(total)}) precisa fechar com o que foi pago "
-                              f"na compra ({brl(upfront_cents)})")
-    return tuple(invites), tuple(shares)
+        pairs.append((phone, amount(partner.get("cents"))))
+    return amount(payload.get("owner_share_cents", 0)), pairs
+
+
+def split_matrix(rows: list[int], columns: list[int]) -> list[list[int]]:
+    """How much of each row's total goes to each column, in proportion to the columns, with every row and
+    every column adding up exactly (the two totals must be equal). Used to spread what each buyer paid
+    over the houses of one deal, each house with its own total."""
+    whole = sum(columns) or 1
+    cells = [[row * column // whole for column in columns] for row in rows]
+    left_in_row = [row - sum(cells[i]) for i, row in enumerate(rows)]
+    left_in_column = [column - sum(cells[i][j] for i in range(len(rows))) for j, column in enumerate(columns)]
+    for i in range(len(rows)):              # the few cents lost to rounding go wherever there is room
+        for j in range(len(columns)):
+            moved = min(left_in_row[i], left_in_column[j])
+            cells[i][j] += moved
+            left_in_row[i] -= moved
+            left_in_column[j] -= moved
+    return cells
+
+
+def bought_with_partners(payload: Mapping[str, Any], upfront_cents: int, owner_phone: str,
+                         today: str) -> tuple[tuple[Invite, ...], tuple[Share, ...]]:
+    """When a house is registered as bought with partners: `partners` [{phone, cents}] and the owner's own
+    `owner_share_cents`, how much each one paid at the purchase. Each partner gets an invite; the shares
+    must add up to what was paid at the purchase (the split is only set here, in the act of buying)."""
+    return bought_deal_with_partners(payload, [upfront_cents], owner_phone, today)[0]
+
+
+def bought_deal_with_partners(payload: Mapping[str, Any], upfronts: list[int], owner_phone: str,
+                              today: str) -> list[tuple[tuple[Invite, ...], tuple[Share, ...]]]:
+    """The same for the houses of one deal (`upfronts`: what was paid at each one's purchase): what each buyer
+    paid is spread over the houses in proportion to what each one cost up front, and every partner is invited
+    to each house. The shares must add up to everything paid at the purchase of all the houses."""
+    owner_share, pairs = _partner_amounts(payload, owner_phone)
+    if not pairs:
+        return [((), ())] * len(upfronts)
+    paid = [owner_share, *(cents for _, cents in pairs)]
+    if sum(paid) != sum(upfronts):
+        raise ValidationError(f"divisão da compra: a soma ({brl(sum(paid))}) precisa fechar com o que foi pago "
+                              f"na compra ({brl(sum(upfronts))})")
+    matrix = split_matrix(paid, upfronts)
+    result = []
+    for j in range(len(upfronts)):
+        invites = [Invite(new_id(), phone, today) for phone, _ in pairs]
+        shares = [Share(OWNER_MEMBER_ID, matrix[0][j])] if matrix[0][j] else []
+        shares += [Share(invite.id, matrix[i + 1][j]) for i, invite in enumerate(invites) if matrix[i + 1][j]]
+        result.append((tuple(invites), tuple(shares)))
+    return result
 
 
 @dataclass(frozen=True)
@@ -293,6 +384,7 @@ class House:
     purchase_shares: tuple[Share, ...] = ()     # set at registration; empty: the owner paid the whole purchase
     owner_name: str = ""
     bundle_id: str = ""             # houses bought in one deal share it ("compra conjunta"); "" = bought alone
+    recurring_bills: tuple[RecurringBill, ...] = ()     # what is due every month, and on which day
 
     @classmethod
     def from_input(cls, payload: Mapping[str, Any], id: Optional[str] = None,
@@ -311,7 +403,8 @@ class House:
                    _percent(payload, "target_profit_percent"), _areas(payload, previous.areas if previous else ()),
                    previous.owner_phone if previous else "", previous.partners if previous else (),
                    previous.invites if previous else (), previous.purchase_shares if previous else (),
-                   previous.owner_name if previous else "", previous.bundle_id if previous else "")
+                   previous.owner_name if previous else "", previous.bundle_id if previous else "",
+                   previous.recurring_bills if previous else ())
 
     @classmethod
     def bundle_from_input(cls, payload: Mapping[str, Any], also: Any) -> list["House"]:
@@ -373,7 +466,9 @@ class House:
                    tuple(Partner(p["id"], p["user"], p["phone"], p.get("name", "")) for p in d.get("partners", ())),
                    tuple(Invite(i["id"], i["phone"], i["date"]) for i in d.get("invites", ())),
                    tuple(Share(s["member_id"], s["cents"]) for s in d.get("purchase_shares", ())),
-                   d.get("owner_name", ""), d.get("bundle_id", ""))
+                   d.get("owner_name", ""), d.get("bundle_id", ""),
+                   tuple(RecurringBill(b["id"], b["name"], b["day"], b.get("since", ""), b.get("until", ""))
+                         for b in d.get("recurring_bills", ())))
 
 
 @dataclass(frozen=True)
@@ -390,6 +485,16 @@ class Expense:
     paid_by: str = ""               # the member who paid it; "" = the owner
     nf_photo: str = ""              # a photo of the invoice (nota fiscal); "" = none
     material_photo: str = ""        # a photo of the material or of the work done; "" = none
+    reference: str = ""             # of a recurring cost: the month it pays, "YYYY-MM" ("" = the month of its date)
+
+    @property
+    def month(self) -> str:
+        """The month a recurring cost refers to: a November bill paid on December 3rd is still November's."""
+        return self.reference or self.date[:7]
+
+    @property
+    def recurring(self) -> bool:
+        return self.category == RECURRING_CATEGORY
 
     @property
     def photos(self) -> list[str]:
@@ -400,11 +505,16 @@ class Expense:
         area_id = payload.get("area_id") or ""
         if not isinstance(area_id, str) or (area_id and not ITEM_ID_RE.match(area_id)):
             raise ValidationError("área: escolha uma das áreas da casa")
-        return cls(id or new_id(), house_id, parse_date(payload.get("date")),
-                   _choice(payload, "category", EXPENSE_CATEGORIES),
+        category = _choice(payload, "category", EXPENSE_CATEGORIES + (RECURRING_CATEGORY,))
+        recurring = category == RECURRING_CATEGORY
+        reference = payload.get("reference") or "" if recurring else ""
+        if reference:
+            parse_date(f"{reference}-01" if isinstance(reference, str) and _MONTH_RE.match(reference) else "",
+                       FIELD_LABELS["reference"])
+        return cls(id or new_id(), house_id, parse_date(payload.get("date")), category,
                    _text(payload, "description", 120), _cents(payload, "amount_cents", minimum=1),
-                   _text(payload, "supplier", 80, required=False), area_id, _member_id(payload),
-                   _photo(payload, "nf_photo"), _photo(payload, "material_photo"))
+                   _text(payload, "supplier", 80, required=False), "" if recurring else area_id, _member_id(payload),
+                   _photo(payload, "nf_photo"), _photo(payload, "material_photo"), reference)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -413,7 +523,7 @@ class Expense:
     def from_dict(cls, d: Mapping[str, Any]) -> "Expense":
         return cls(d["id"], d["house_id"], d["date"], d["category"], d["description"], d["amount_cents"],
                    d.get("supplier", ""), d.get("area_id", ""), d.get("paid_by", ""),
-                   d.get("nf_photo", ""), d.get("material_photo", ""))
+                   d.get("nf_photo", ""), d.get("material_photo", ""), d.get("reference", ""))
 
 
 @dataclass(frozen=True)
