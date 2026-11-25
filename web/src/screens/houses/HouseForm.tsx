@@ -95,6 +95,7 @@ export function HouseForm({ house, defaultProfit, onBack, onSaved }:
           if (!parseDate(deal.date)) return notify("Data da compra: informe a data como dd/mm/aaaa", true);
           go("reforma");
         }}>Continuar: pontos de reforma</button>
+        {editing && <button className="primary" id="h-save-now" disabled={busy} onClick={() => save()}>Salvar</button>}
       </div>
     </div>
   );
@@ -135,6 +136,7 @@ export function HouseForm({ house, defaultProfit, onBack, onSaved }:
       <div className="actions">
         <button className="secondary" onClick={() => go("dados")}>Voltar</button>
         <button className="primary" id="h-next" onClick={() => go("valor")}>Continuar: valor</button>
+        {editing && <button className="primary" id="h-save-now" disabled={busy} onClick={() => save()}>Salvar</button>}
       </div>
     </div>
   );
@@ -158,6 +160,7 @@ export function HouseForm({ house, defaultProfit, onBack, onSaved }:
       <div className="actions">
         <button className="secondary" onClick={() => go("reforma")}>Voltar</button>
         <button className="primary" id="h-next" onClick={() => attempt(() => { checkValue(d); go(many ? "casas" : "pagamento"); })}>Continuar: pagamento</button>
+        {editing && <button className="primary" id="h-save-now" disabled={busy} onClick={() => save()}>Salvar</button>}
         {!editing && <button className="secondary" id="h-add-here" onClick={() => attempt(() => { checkValue(d); addAnother(); })}>
           Comprei outra casa nesta negociação</button>}
       </div>
@@ -217,6 +220,8 @@ export function HouseForm({ house, defaultProfit, onBack, onSaved }:
         if (value === null) throw new Error("Lucro desejado: informe um percentual como 30 ou 12,5");
         return value;
       };
+      if (!drafts[0].name.trim()) throw new Error("Nome: preencha este campo");
+      if (!drafts[0].address.trim()) throw new Error("Endereço: preencha este campo");
       const data = (x: Draft) => ({ name: x.name, address: x.address, status: x.status, notes: x.notes,
         purchase_price_cents: money(x.price, "Valor do imóvel"), purchase_costs_cents: money(x.costs, "Custos da compra", false),
         target_profit_percent: target(x), areas: x.areas });

@@ -310,9 +310,7 @@ def run():
         page.click("text=Voltar")
         page.click("text=Voltar")
         page.locator("#h-areas .chip", has_text="Banheiros").click()
-        page.click("#h-next")
-        page.click("#h-next")
-        page.click("#h-save")
+        page.click("#h-save-now")                                                      # editing: save from any step
         expect(page.locator("h1 .badge")).to_have_text("Pronta")
         page.click("text=‹ Casas")
         expect(page.locator(".list-item")).to_have_count(1)
